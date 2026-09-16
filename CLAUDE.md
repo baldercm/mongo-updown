@@ -75,6 +75,10 @@ pnpm run format:check  # check formatting without writing (oxfmt --check .)
 pnpm test              # pretest boots docker-compose's local MongoDB, node:test runs test/**/*.spec.ts, posttest tears it down
 ```
 
+`.github/workflows/ci.yml` runs `typecheck`, `lint`, `format:check`, and `test` (in that order) on
+every push to `main` and every pull request, pinned to the same Node (`24.21.0`) and pnpm
+(`11.10.0`) versions as `pnpm-workspace.yaml`/`.nvmrc`.
+
 ## Toolchain
 
 - Package manager: **pnpm** (`pnpm-workspace.yaml` pins `nodeVersion: '24.21.0'`, `saveExact: true`). Node version is also pinned via `.nvmrc` (`24`). Dependencies are added with exact versions (see `typescript: "7.0.2"` in `package.json`, no `^`/`~`), except `peerDependencies`, which use ranges. `chalk` is the one runtime `dependency` (used by `#Common/logger`'s `consoleLogger`), pinned exact like everything else.
