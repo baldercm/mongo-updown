@@ -61,6 +61,10 @@ is a pointer to where the connection string actually lives:
 - `{ fromFile: '<path>' }` — read from a separate file. If you use this form, **add that file to
   `.gitignore`** — it's the one place the real connection string is written down.
 
+The connection string itself must include the database name (e.g.
+`mongodb://localhost:27017/my-app`, not just `mongodb://localhost:27017`) — mongo-updown connects
+to the database named in the URI, and the MongoDB driver throws if none is present.
+
 ## Writing migrations
 
 Migrations live under `migrationsDir`, one subdirectory per version:
