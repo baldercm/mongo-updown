@@ -42,6 +42,13 @@ and including that version, in order; `down` rolls back every applied migration 
 upward, inclusive. The optional `<file?>` narrows either command to a single migration file within
 that version.
 
+Show usage help or the installed version:
+
+```shell
+npx mongo-updown --help
+npx mongo-updown --version
+```
+
 ## Configuration
 
 `init` writes `mongo-updown.config.js` to your project root:

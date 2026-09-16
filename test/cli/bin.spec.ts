@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 const BIN_PATH = join(import.meta.dirname, '..', '..', 'src', 'cli', 'bin.ts')
+const PACKAGE_JSON_PATH = join(import.meta.dirname, '..', '..', 'package.json')
 
 async function runCli(args: string[], cwd: string): Promise<{ stdout: string; stderr: string; code: number }> {
   try {
@@ -28,6 +29,32 @@ describe('mongo-updown CLI', () => {
 
   after(async () => {
     await rm(dir, { recursive: true, force: true })
+  })
+
+  it('prints usage and exits 0 for "--help"', async () => {
+    const result = await runCli(['--help'], dir)
+    assert.equal(result.code, 0)
+    assert.match(result.stdout, /usage/i)
+  })
+
+  it('prints usage and exits 0 for "-h"', async () => {
+    const result = await runCli(['-h'], dir)
+    assert.equal(result.code, 0)
+    assert.match(result.stdout, /usage/i)
+  })
+
+  it('prints the installed version and exits 0 for "--version"', async () => {
+    const { version } = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf8')) as { version: string }
+    const result = await runCli(['--version'], dir)
+    assert.equal(result.code, 0)
+    assert.equal(result.stdout.trim(), version)
+  })
+
+  it('prints the installed version and exits 0 for "-v"', async () => {
+    const { version } = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf8')) as { version: string }
+    const result = await runCli(['-v'], dir)
+    assert.equal(result.code, 0)
+    assert.equal(result.stdout.trim(), version)
   })
 
   it('runs "init" and writes a config file', async () => {

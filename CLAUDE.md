@@ -28,6 +28,9 @@ npx mongo-updown down <version> <file?>
 - **`up <version> <file?>`** applies every pending migration up to and including `<version>`, in
   order; `down <version> <file?>` rolls back everything applied from `<version>` upward, inclusive. `<file?>`
   narrows either command to a single migration file within the target version.
+- **`--help`/`-h`** prints usage and exits 0; **`--version`/`-v`** prints the installed package
+  version (read from `package.json` at runtime, resolved relative to `bin.ts`/`bin.js` so it works
+  in both dev and the compiled `dist/` output) and exits 0. Recognized only as the first argument.
 - **Versions are semver strings** (`major.minor.patch`), compared with semver rules.
 - **Migration layout**: `<migrationsDir>/<version>/<filename>.js` — the version is the directory
   name, not part of the filename (e.g. `migrations/1.2.0/add-user-index.js`). Migration files must

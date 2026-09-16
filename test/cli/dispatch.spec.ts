@@ -4,6 +4,22 @@ import { describe, it } from 'node:test'
 import { parseCliArgs } from '#Cli/dispatch'
 
 describe('parseCliArgs', () => {
+  it('parses "--help"', () => {
+    assert.deepEqual(parseCliArgs(['--help']), { kind: 'help' })
+  })
+
+  it('parses "-h"', () => {
+    assert.deepEqual(parseCliArgs(['-h']), { kind: 'help' })
+  })
+
+  it('parses "--version"', () => {
+    assert.deepEqual(parseCliArgs(['--version']), { kind: 'version' })
+  })
+
+  it('parses "-v"', () => {
+    assert.deepEqual(parseCliArgs(['-v']), { kind: 'version' })
+  })
+
   it('parses "init" with no flags', () => {
     assert.deepEqual(parseCliArgs(['init']), { kind: 'init', force: false })
   })
