@@ -7,8 +7,6 @@
     "target": "ES2024",
     "declaration": true,
     "removeComments": true,
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "sourceMap": true,
     "strict": true,
@@ -24,9 +22,9 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "isolatedModules": true,
-    "paths": {
-      "@Common/*": ["./src/common/*"]
-    },
-    "types": ["node", "jest"]
+    "customConditions": ["development"],
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "types": ["node"]
   }
 }

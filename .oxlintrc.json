@@ -20,7 +20,7 @@
         "patterns": [
           {
             "regex": "^\\.\\.?(/|$)",
-            "message": "Use path aliases (eg. @Common) instead of relative imports."
+            "message": "Use path aliases (eg. #Common) instead of relative imports."
           }
         ]
       }
@@ -49,7 +49,6 @@
   ],
   "env": {
     "builtin": true,
-    "jest": true,
     "node": true
   }
 }

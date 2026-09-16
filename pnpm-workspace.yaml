@@ -1,2 +1,4 @@
+minimumReleaseAgeExclude:
+  - '@types/node@24.13.5'
 nodeVersion: '24.21.0'
 saveExact: true

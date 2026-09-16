@@ -4,27 +4,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-The repository has toolchain scaffolding (git, pnpm, TypeScript, lint/format configs) but no application source yet — there is no `src/` or `test/` directory, and `package.json`'s `main` (`index.js`) does not exist. Treat this as a greenfield implementation guided by the tooling configs already committed.
-
-Gap to be aware of: `tsconfig.json`'s `types: ["node", "jest"]` and `.oxlintrc.json`'s `env.jest: true` anticipate Jest as the test runner, but no test framework is in `devDependencies` yet — it needs to be installed before any tests can be written or run (`package.json`'s `test` script is still the placeholder `echo "Error: no test specified" && exit 1`).
+Architecture is designed (see below) and implementation is underway. `src/` and `test/` are being
+built out to match the module boundaries and decisions documented here.
 
 ## Intended purpose (from README.md)
 
-mongo-updown is planned to be an opinionated MongoDB migration tool, written in TypeScript, featuring:
+mongo-updown is an opinionated MongoDB migration tool, written in TypeScript, featuring:
 
 - up/down migration scripts
 - version-aware migrations
 
-Planned CLI usage (not yet implemented):
+CLI usage:
 
 ```shell
-npm i -D mongo-updown
+npm i -D mongo-updown mongodb
 npx mongo-updown init
 npx mongo-updown up <version> <file?>
 npx mongo-updown down <version> <file?>
 ```
 
-Keep the CLI surface (`init`, `up`, `down`) and the up/down + version-aware migration model described above as the north star for the architecture.
+## Architecture
+
+- **`up <version> <file?>`** applies every pending migration up to and including `<version>`, in
+  order; `down <version> <file?>` rolls back everything applied from `<version>` upward, inclusive. `<file?>`
+  narrows either command to a single migration file within the target version.
+- **Versions are semver strings** (`major.minor.patch`), compared with semver rules.
+- **Migration layout**: `<migrationsDir>/<version>/<filename>.js` — the version is the directory
+  name, not part of the filename (e.g. `migrations/1.2.0/add-user-index.js`). Migration files must
+  already be compiled `.js`; mongo-updown does no TypeScript execution of user migrations, just a
+  plain dynamic `import()`. Each file exports `up(db, client)` / `down(db, client)`.
+- **State tracking**: a dedicated collection (default `mongo_updown_migrations`) with documents
+  shaped `{ version, file, appliedAt }`, used to diff "already applied" against "on disk".
+- **Config file** (`mongo-updown.config.js`, written by `init`, refuses to overwrite an existing
+  one unless `--force`) never contains a raw connection string — `mongoUri` is
+  `{ fromEnv: string } | { fromFile: string }`, resolved to the actual URI only right before
+  connecting. This keeps the config file safe to commit; a `fromFile` secrets file must be
+  gitignored.
+- **MongoDB driver** (`mongodb`) is a `peerDependency` (`^7.0.0`), not bundled — the host project
+  controls the installed driver version.
+- **Module boundaries** under `src/`: `cli/` (argv parsing + `init`/`up`/`down` commands),
+  `config/` (load/validate the config file), `migrations/` (discover files on disk, load them,
+  compute the ordered plan to run — the plan computation is a pure function, no I/O), `db/` (own
+  the `MongoClient` connection and the state-tracking collection), `common/` (shared types, error
+  classes, and a logger port since `no-console` is a lint error).
 
 ## Commands
 
@@ -35,29 +57,39 @@ pnpm run typecheck     # typecheck only (tsc --noEmit)
 pnpm run lint          # lint (oxlint .)
 pnpm run format        # format and write (oxfmt .)
 pnpm run format:check  # check formatting without writing (oxfmt --check .)
+pnpm test              # pretest boots docker-compose's local MongoDB, node:test runs test/**/*.spec.ts, posttest tears it down
 ```
-
-There is no test runner installed yet (see gap noted above), so there is no `test` script beyond the placeholder and no way to run tests, single or otherwise, until one (e.g. Jest, implied by the existing config) is added as a dependency.
 
 ## Toolchain
 
-- Package manager: **pnpm** (`pnpm-workspace.yaml` pins `nodeVersion: '24.21.0'`, `saveExact: true`). Node version is also pinned via `.nvmrc` (`24`). Dependencies are added with exact versions (see `typescript: "7.0.2"` in `package.json`, no `^`/`~`).
-- Language: TypeScript, strict mode, target `ES2024`, `module: nodenext` (see `tsconfig.json`). `tsconfig.build.json` extends it for compiling `src/**/*.ts` while excluding `**/*spec.ts`, emitting to `./dist`.
+- Package manager: **pnpm** (`pnpm-workspace.yaml` pins `nodeVersion: '24.21.0'`, `saveExact: true`). Node version is also pinned via `.nvmrc` (`24`). Dependencies are added with exact versions (see `typescript: "7.0.2"` in `package.json`, no `^`/`~`), except `peerDependencies`, which use ranges.
+- Module system: **`"type": "module"`** (ESM) — required so native Node TypeScript type-stripping can execute `.ts` files directly (it strips types only, it does not convert module syntax), which is what lets `node:test` run `.spec.ts` files with no build step.
+- Language: TypeScript, strict mode, target `ES2024`, `module: nodenext` (see `tsconfig.json`). Also sets `customConditions: ["development"]` (see Path aliases below), `erasableSyntaxOnly: true` (catches decorators/enums at typecheck time — decorators are intentionally unused; native type-stripping can't execute them), and `verbatimModuleSyntax: true` (forces explicit `import type`, matching oxfmt's import-sorting groups below). `tsconfig.build.json` extends it for compiling `src/**/*.ts` while excluding `**/*spec.ts`, emitting to `./dist`.
 - Lint: `oxlint` (`.oxlintrc.json`) — notable non-default rules once code exists:
-  - Relative imports (`./`, `../`) are banned; use the path aliases defined in `tsconfig.json`'s `paths` instead.
+  - Relative imports (`./`, `../`), including same-folder siblings, are banned; use the `#`-prefixed path aliases (package.json `imports` field, see below) instead.
   - `no-console`, `typescript/no-explicit-any`, `typescript/no-floating-promises`, `typescript/no-misused-promises`, and `typescript/explicit-module-boundary-types` are errors.
   - `test/**` and `test/setup.ts`/`test/teardown.ts` have relaxed overrides (e.g. `no-restricted-imports` off for setup/teardown).
-- Format: `oxfmt` (`.oxfmtrc.json`) — no semicolons, single quotes, 2-space indent, 120 print width, no trailing commas, and import sorting grouped as: builtins → externals → `@`-prefixed path-alias imports → relative imports → unknown.
+- Format: `oxfmt` (`.oxfmtrc.json`) — no semicolons, single quotes, 2-space indent, 120 print width, no trailing commas, and import sorting grouped as: builtins → externals → `#`-prefixed path-alias imports → relative imports → unknown.
+- Test runner: native **`node:test`** (not Jest, despite what the scaffolding originally anticipated) — `describe`/`it`/`before`/`after` from `node:test`, assertions from `node:assert/strict`, no globals. Run as `node --conditions=development --test "test/**/*.spec.ts"`; `--conditions=development` is what makes the `#X/*` aliases resolve to `src/*.ts` (see below) instead of `dist/*.js`. Integration tests (`db/*`, migration loading) run against a real local MongoDB via `docker-compose.yml`, started/stopped by `test/setup.ts`/`test/teardown.ts` through npm's `pretest`/`posttest` lifecycle scripts (`node:test` has no Jest-style `globalSetup`/`globalTeardown`).
 
 ### Path aliases
 
-`tsconfig.json` defines path aliases under `paths` that the codebase is expected to grow into (the directory doesn't exist yet):
+Aliases are defined as a **package.json `imports` field**, not `tsconfig.json` `paths` — native Node type-stripping doesn't read `tsconfig.json` at all, so `paths`-based aliases would typecheck but fail to resolve at runtime. Each alias is conditional so it resolves to source when running from `.ts` (dev/test, via `--conditions=development`) and to the compiled build otherwise (what a consumer running the published CLI actually executes):
 
-```
-@Common/* -> src/common/*
+```json
+"imports": {
+  "#Common/*":     { "development": "./src/common/*.ts",     "default": "./dist/common/*.js" },
+  "#Cli/*":        { "development": "./src/cli/*.ts",        "default": "./dist/cli/*.js" },
+  "#Config/*":     { "development": "./src/config/*.ts",     "default": "./dist/config/*.js" },
+  "#Migrations/*": { "development": "./src/migrations/*.ts", "default": "./dist/migrations/*.js" },
+  "#Db/*":         { "development": "./src/db/*.ts",         "default": "./dist/db/*.js" }
+}
 ```
 
-Import shared/common code via `@Common/*` rather than a relative path (enforced by the `no-restricted-imports` oxlint rule above). Add further aliases here as new top-level source areas are introduced.
+Import shared/common code via `#Common/*` (etc.) rather than a relative path — extensionless, e.g.
+`import { X } from '#Common/errors'` (enforced by the `no-restricted-imports` oxlint rule above).
+Add a further `#<Area>/*` alias here, following the same `development`/`default` pattern, whenever
+a new top-level `src/` area is introduced.
 
 ## Directives
 

@@ -16,7 +16,7 @@
     "customGroups": [
       {
         "groupName": "modules",
-        "elementNamePattern": ["@/", "@/**", "@[A-Z]*", "@[A-Z]*/**"]
+        "elementNamePattern": ["#/", "#/**", "#[A-Z]*", "#[A-Z]*/**"]
       }
     ],
     "groups": [
