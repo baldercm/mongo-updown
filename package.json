@@ -2,11 +2,30 @@
   "name": "mongo-updown",
   "version": "1.0.0",
   "description": "mongo-updown is an opinionated MongoDB migration tool featuring: - up/down scripts - version aware - written in TypeScript",
+  "keywords": [
+    "cli",
+    "database",
+    "migration",
+    "migrations",
+    "mongodb",
+    "typescript"
+  ],
+  "homepage": "https://github.com/baldercm/mongo-updown#readme",
+  "bugs": {
+    "url": "https://github.com/baldercm/mongo-updown/issues"
+  },
   "license": "MIT",
   "author": "Bálder Carraté",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/baldercm/mongo-updown.git"
+  },
   "bin": {
     "mongo-updown": "./dist/cli/bin.js"
   },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "imports": {
     "#Common/*": {
@@ -54,5 +73,8 @@
   },
   "peerDependencies": {
     "mongodb": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=24.21.0"
   }
 }
