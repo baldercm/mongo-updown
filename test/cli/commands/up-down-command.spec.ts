@@ -73,3 +73,47 @@ exports.down = async (db) => { await db.collection('${sideEffectsCollection}').d
     assert.deepEqual(await getAppliedMigrations(db, stateCollection), [])
   })
 })
+
+describe('runDownCommand when a previously applied migration file is missing on disk', () => {
+  let dir = ''
+  let client: MongoClient
+  let db: Db
+  const stateCollection = `mongo_updown_state_test_${randomUUID()}`
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'mongo-updown-missing-file-'))
+    process.env.MONGO_UPDOWN_TEST_URI = 'mongodb://localhost:27017/mongo_updown_test'
+    await writeFile(
+      join(dir, 'mongo-updown.config.js'),
+      `module.exports = {
+        mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
+        migrationsDir: './migrations',
+        stateCollection: '${stateCollection}',
+      }\n`
+    )
+    await mkdir(join(dir, 'migrations', '1.0.0'), { recursive: true })
+    await writeFile(
+      join(dir, 'migrations', '1.0.0', 'create-marker.js'),
+      `exports.up = async () => {}
+exports.down = async () => {}
+`
+    )
+    ;({ client, db } = await connect('mongodb://localhost:27017/mongo_updown_test'))
+    await runUpCommand({ cwd: dir, targetVersion: '1.0.0' }, createSilentLogger())
+    await rm(join(dir, 'migrations', '1.0.0', 'create-marker.js'))
+  })
+
+  after(async () => {
+    await db.collection(stateCollection).drop()
+    await client.close()
+    delete process.env.MONGO_UPDOWN_TEST_URI
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('throws when a migration recorded as applied no longer exists on disk', async () => {
+    await assert.rejects(
+      runDownCommand({ cwd: dir, targetVersion: '1.0.0' }, createSilentLogger()),
+      /was not found on disk/i
+    )
+  })
+})
