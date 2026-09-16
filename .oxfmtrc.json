@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": ["docker-compose.yml"],
+  "trailingComma": "none",
+  "tabWidth": 2,
+  "semi": false,
+  "singleQuote": true,
+  "printWidth": 120,
+  "useTabs": false,
+  "bracketSpacing": true,
+  "proseWrap": "preserve",
+  "sortPackageJson": true,
+  "sortImports": {
+    "ignoreCase": true,
+    "newlinesBetween": true,
+    "customGroups": [
+      {
+        "groupName": "modules",
+        "elementNamePattern": ["@/", "@/**", "@[A-Z]*", "@[A-Z]*/**"]
+      }
+    ],
+    "groups": [
+      ["type-builtin", "value-builtin"],
+      ["type-external", "value-external"],
+      "modules",
+      ["type-parent", "type-sibling", "type-index", "value-parent", "value-sibling", "value-index"],
+      "unknown"
+    ]
+  }
+}
