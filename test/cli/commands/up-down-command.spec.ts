@@ -14,7 +14,7 @@ import { connect } from '#Db/connect'
 import { getAppliedMigrations } from '#Db/migration-state-store'
 
 function createSilentLogger(): Logger {
-  return { info: () => undefined, error: () => undefined }
+  return { info: () => undefined, step: () => undefined, success: () => undefined, error: () => undefined }
 }
 
 describe('runUpCommand / runDownCommand', () => {

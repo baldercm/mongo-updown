@@ -47,6 +47,14 @@ npx mongo-updown down <version> <file?>
   compute the ordered plan to run — the plan computation is a pure function, no I/O), `db/` (own
   the `MongoClient` connection and the state-tracking collection), `common/` (shared types, error
   classes, and a logger port since `no-console` is a lint error).
+- **Logger port** (`#Common/logger`) has four semantic methods — `info`, `step`, `success`,
+  `error` — instead of a single generic log call, so command code states _what kind_ of message
+  it's emitting and leaves symbol/color formatting entirely to the implementation. `consoleLogger`
+  is the production implementation: it prefixes each level with a restrained symbol (`·` info, `▸`
+  step, `✔` success, `✖` error) and colors the line via `chalk`, which auto-detects TTY/`NO_COLOR`
+  support so piped/CI output degrades to plain text automatically. `createConsoleLogger(chalkInstance)`
+  takes an injectable `ChalkInstance` (default: chalk's auto-detecting default export) so tests can
+  force color on/off deterministically instead of depending on the test runner's TTY state.
 
 ## Commands
 
@@ -62,7 +70,7 @@ pnpm test              # pretest boots docker-compose's local MongoDB, node:test
 
 ## Toolchain
 
-- Package manager: **pnpm** (`pnpm-workspace.yaml` pins `nodeVersion: '24.21.0'`, `saveExact: true`). Node version is also pinned via `.nvmrc` (`24`). Dependencies are added with exact versions (see `typescript: "7.0.2"` in `package.json`, no `^`/`~`), except `peerDependencies`, which use ranges.
+- Package manager: **pnpm** (`pnpm-workspace.yaml` pins `nodeVersion: '24.21.0'`, `saveExact: true`). Node version is also pinned via `.nvmrc` (`24`). Dependencies are added with exact versions (see `typescript: "7.0.2"` in `package.json`, no `^`/`~`), except `peerDependencies`, which use ranges. `chalk` is the one runtime `dependency` (used by `#Common/logger`'s `consoleLogger`), pinned exact like everything else.
 - Module system: **`"type": "module"`** (ESM) — required so native Node TypeScript type-stripping can execute `.ts` files directly (it strips types only, it does not convert module syntax), which is what lets `node:test` run `.spec.ts` files with no build step.
 - Language: TypeScript, strict mode, target `ES2024`, `module: nodenext` (see `tsconfig.json`). Also sets `customConditions: ["development"]` (see Path aliases below), `erasableSyntaxOnly: true` (catches decorators/enums at typecheck time — decorators are intentionally unused; native type-stripping can't execute them), and `verbatimModuleSyntax: true` (forces explicit `import type`, matching oxfmt's import-sorting groups below). `tsconfig.build.json` extends it for compiling `src/**/*.ts` while excluding `**/*spec.ts`, emitting to `./dist`.
 - Lint: `oxlint` (`.oxlintrc.json`) — notable non-default rules once code exists:

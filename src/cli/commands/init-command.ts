@@ -24,5 +24,5 @@ export async function runInitCommand(options: InitCommandOptions, logger: Logger
   await writeFile(configPath, buildDefaultConfigContent(moduleType))
   await mkdir(join(cwd, DEFAULT_MIGRATIONS_DIR), { recursive: true })
 
-  logger.info(`Wrote ${CONFIG_FILE_NAME} and created ${DEFAULT_MIGRATIONS_DIR}`)
+  logger.success(`Wrote ${CONFIG_FILE_NAME} and created ${DEFAULT_MIGRATIONS_DIR}`)
 }

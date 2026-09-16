@@ -40,6 +40,9 @@
     "test": "node --conditions=development --test \"test/**/*.spec.ts\"",
     "posttest": "node test/teardown.ts"
   },
+  "dependencies": {
+    "chalk": "6.0.0"
+  },
   "devDependencies": {
     "@tsconfig/node24": "24.0.5",
     "@types/node": "24.13.5",

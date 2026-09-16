@@ -41,12 +41,12 @@ export async function runUpCommand(options: RunUpCommandOptions, logger: Logger)
       if (!discoveredMigration) {
         throw new Error(`Migration "${migrationRef.file}" for version ${migrationRef.version} was not found on disk.`)
       }
-      logger.info(`Applying ${migrationRef.version}/${migrationRef.file}...`)
+      logger.step(`Applying ${migrationRef.version}/${migrationRef.file}...`)
       const migration = await loadMigration(discoveredMigration.filePath)
       await migration.up(db, client)
       await recordAppliedMigration(db, config.stateCollection, migrationRef)
     })
-    logger.info(`Applied ${String(plan.length)} migration(s).`)
+    logger.success(`Applied ${String(plan.length)} migration(s).`)
   } finally {
     await client.close()
   }

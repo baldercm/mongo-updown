@@ -41,12 +41,12 @@ export async function runDownCommand(options: RunDownCommandOptions, logger: Log
       if (!discoveredMigration) {
         throw new Error(`Migration "${migrationRef.file}" for version ${migrationRef.version} was not found on disk.`)
       }
-      logger.info(`Rolling back ${migrationRef.version}/${migrationRef.file}...`)
+      logger.step(`Rolling back ${migrationRef.version}/${migrationRef.file}...`)
       const migration = await loadMigration(discoveredMigration.filePath)
       await migration.down(db, client)
       await removeAppliedMigration(db, config.stateCollection, migrationRef)
     })
-    logger.info(`Rolled back ${String(plan.length)} migration(s).`)
+    logger.success(`Rolled back ${String(plan.length)} migration(s).`)
   } finally {
     await client.close()
   }
