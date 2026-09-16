@@ -35,6 +35,13 @@ npx mongo-updown down <version> <file?>
   plain dynamic `import()`. Each file exports `up(db, client)` / `down(db, client)`.
 - **State tracking**: a dedicated collection (default `mongo_updown_migrations`) with documents
   shaped `{ version, file, appliedAt }`, used to diff "already applied" against "on disk".
+- **Failure behavior**: `runMigrationCommand` (`src/cli/commands/run-migration-command.ts`) runs a
+  plan sequentially and stops at the first throw, leaving earlier steps in that run applied/rolled
+  back as they completed. Recording state is a separate write after the migration function
+  returns — not wrapped in a transaction — so a crash or state-store failure in that window can
+  leave a migration applied-but-unrecorded (or the reverse on rollback), and the next run will
+  attempt it again. This is an accepted trade-off, not a bug: user migrations are expected to be
+  safe to run twice.
 - **Config file** (`mongo-updown.config.js`, written by `init`, refuses to overwrite an existing
   one unless `--force`) never contains a raw connection string — `mongoUri` is
   `{ fromEnv: string } | { fromFile: string }`, resolved to the actual URI only right before

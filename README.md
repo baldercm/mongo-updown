@@ -88,3 +88,16 @@ exports.down = async (db, client) => {
 Migration files must be plain, already-compiled `.js` — mongo-updown does not transpile
 TypeScript at runtime. If you write migrations in TypeScript, compile them before running `up`/
 `down`.
+
+## Failure behavior
+
+Migrations in a plan run one at a time, in order. If one throws, the run stops immediately —
+migrations already applied (or rolled back) earlier in that same run stay that way; nothing after
+the failure is attempted.
+
+Recording that a migration ran is a separate write that happens right after its `up`/`down`
+function returns. mongo-updown does not wrap the two in a transaction, so a process crash or a
+failed state-store write in that narrow window can leave a migration applied but not recorded (or
+vice versa on rollback). The next run would then try to (re)apply it. Write migrations to be safe
+to run twice — e.g. use `createIndex`/upsert-style operations instead of ones that fail on a
+second run — so a retry after a partial failure is harmless.
