@@ -2,8 +2,8 @@
   "name": "mongo-updown",
   "version": "1.0.0",
   "description": "mongo-updown is an opinionated MongoDB migration tool featuring: - up/down scripts - version aware - written in TypeScript",
-  "license": "ISC",
-  "author": "",
+  "license": "MIT",
+  "author": "Bálder Carraté",
   "bin": {
     "mongo-updown": "./dist/cli/bin.js"
   },
