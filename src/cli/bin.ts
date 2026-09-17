@@ -49,7 +49,10 @@ async function main(): Promise<void> {
     return
   }
 
-  await runDownCommand({ cwd, targetVersion: command.targetVersion, targetFile: command.targetFile }, consoleLogger)
+  if (command.kind === 'down') {
+    await runDownCommand({ cwd, targetVersion: command.targetVersion, targetFile: command.targetFile }, consoleLogger)
+    return
+  }
 }
 
 main().catch((error: unknown) => {
