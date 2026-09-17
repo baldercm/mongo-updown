@@ -3,7 +3,6 @@ import { isAbsolute, join } from 'node:path'
 import type { Db, MongoClient } from 'mongodb'
 
 import type { Logger } from '#Common/logger'
-import { runSequentially } from '#Common/sequential'
 import { loadConfig, resolveMongoUri } from '#Config/load-config'
 import { connect } from '#Db/connect'
 import { getAppliedMigrations } from '#Db/migration-state-store'
@@ -56,7 +55,7 @@ export async function runMigrationCommand(
       return
     }
 
-    await runSequentially(plan, async (migrationRef) => {
+    for (const migrationRef of plan) {
       const discoveredMigration = discovered.find(
         (m) => m.version === migrationRef.version && m.file === migrationRef.file
       )
@@ -64,10 +63,13 @@ export async function runMigrationCommand(
         throw new Error(`Migration "${migrationRef.file}" for version ${migrationRef.version} was not found on disk.`)
       }
       logger.step(`${strategy.stepVerb} ${migrationRef.version}/${migrationRef.file}...`)
+      // Migrations must apply in order, one at a time — these awaits cannot be parallelized.
+      /* eslint-disable no-await-in-loop */
       const migration = await loadMigration(discoveredMigration.filePath)
       await strategy.applyMigration(migration, db, client)
       await strategy.updateState(db, config.stateCollection, migrationRef)
-    })
+      /* eslint-enable no-await-in-loop */
+    }
     logger.success(`${strategy.doneVerb} ${String(plan.length)} migration(s).`)
   } finally {
     await client.close()
