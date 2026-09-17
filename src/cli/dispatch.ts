@@ -10,7 +10,7 @@ export type CliCommand =
 export function parseCliArgs(argv: readonly string[]): CliCommand {
   const [command, ...rest] = argv
 
-  if (command === '--help' || command === '-h') {
+  if (command === undefined || command === '--help' || command === '-h') {
     return { kind: 'help' }
   }
 

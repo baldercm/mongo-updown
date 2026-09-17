@@ -56,7 +56,7 @@ describe('parseCliArgs', () => {
     assert.throws(() => parseCliArgs(['frobnicate']), /unknown command/i)
   })
 
-  it('throws when no command is given', () => {
-    assert.throws(() => parseCliArgs([]), /unknown command/i)
+  it('treats no command as "--help"', () => {
+    assert.deepEqual(parseCliArgs([]), { kind: 'help' })
   })
 })
