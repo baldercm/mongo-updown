@@ -39,8 +39,17 @@ npx mongo-updown down <version> <file?>
   name, not part of the filename (e.g. `migrations/1.2.0/add-user-index.js`). Migration files must
   already be compiled `.js`; mongo-updown does no TypeScript execution of user migrations, just a
   plain dynamic `import()`. Each file exports `up(db, client)` / `down(db, client)`.
-- **State tracking**: a dedicated collection (default `mongo_updown_migrations`) with documents
-  shaped `{ version, file, appliedAt }`, used to diff "already applied" against "on disk".
+- **State tracking**: a dedicated collection (default `mongo_updown_migrations`) is an
+  append-only event log — documents are shaped `{ version, file, direction, date }`
+  (`direction: 'up' | 'down'`) and are never deleted or updated, so the full migration history is
+  always recoverable. `recordMigrationUp`/`recordMigrationDown` (`src/db/migration-state-store.ts`)
+  each just `insertOne` a new event with their respective direction; there is no delete path.
+  `getAppliedMigrations` derives "currently applied" (used to diff against "on disk") via a
+  `$sort`/`$group`(`$last`)/`$match` aggregation pipeline run inside MongoDB, rather than fetching
+  the whole (ever-growing) event log into the process — it groups by `{ version, file }`, keeps
+  only the direction of each group's most recent event, and returns the ones whose latest direction
+  is `'up'`. A migration rolled back and never reapplied has a `'down'` event as its latest and is
+  therefore excluded.
 - **Failure behavior**: `runMigrationCommand` (`src/cli/commands/run-migration-command.ts`) runs a
   plan sequentially and stops at the first throw, leaving earlier steps in that run applied/rolled
   back as they completed. Recording state is a separate write after the migration function

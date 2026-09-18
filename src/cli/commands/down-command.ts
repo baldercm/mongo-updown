@@ -1,7 +1,7 @@
 import type { RunMigrationCommandOptions } from '#Cli/commands/run-migration-command'
 import { runMigrationCommand } from '#Cli/commands/run-migration-command'
 import type { Logger } from '#Common/logger'
-import { removeAppliedMigration } from '#Db/migration-state-store'
+import { recordMigrationDown } from '#Db/migration-state-store'
 
 export type RunDownCommandOptions = RunMigrationCommandOptions
 
@@ -11,6 +11,6 @@ export async function runDownCommand(options: RunDownCommandOptions, logger: Log
     stepVerb: 'Rolling back',
     doneVerb: 'Rolled back',
     applyMigration: (migration, db, client) => migration.down(db, client),
-    updateState: removeAppliedMigration
+    updateState: recordMigrationDown
   })
 }

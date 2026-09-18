@@ -1,26 +1,42 @@
 import type { Db } from 'mongodb'
 
-import type { MigrationRef } from '#Migrations/migration-plan'
+import type { MigrationDirection, MigrationRef } from '#Migrations/migration-plan'
 
-export interface AppliedMigrationDocument extends MigrationRef {
-  readonly appliedAt: Date
+export interface MigrationEventDocument extends MigrationRef {
+  readonly direction: MigrationDirection
+  readonly date: Date
 }
 
-export async function getAppliedMigrations(db: Db, collectionName: string): Promise<MigrationRef[]> {
-  const docs = await db.collection<AppliedMigrationDocument>(collectionName).find().toArray()
-  return docs.map((doc) => ({ version: doc.version, file: doc.file }))
-}
-
-export async function recordAppliedMigration(db: Db, collectionName: string, migration: MigrationRef): Promise<void> {
-  await db.collection<AppliedMigrationDocument>(collectionName).insertOne({
+async function recordMigrationEvent(
+  db: Db,
+  collectionName: string,
+  migration: MigrationRef,
+  direction: MigrationDirection
+): Promise<void> {
+  await db.collection<MigrationEventDocument>(collectionName).insertOne({
     version: migration.version,
     file: migration.file,
-    appliedAt: new Date()
+    direction,
+    date: new Date()
   })
 }
 
-export async function removeAppliedMigration(db: Db, collectionName: string, migration: MigrationRef): Promise<void> {
-  await db
-    .collection<AppliedMigrationDocument>(collectionName)
-    .deleteMany({ version: migration.version, file: migration.file })
+export async function recordMigrationUp(db: Db, collectionName: string, migration: MigrationRef): Promise<void> {
+  await recordMigrationEvent(db, collectionName, migration, 'up')
+}
+
+export async function recordMigrationDown(db: Db, collectionName: string, migration: MigrationRef): Promise<void> {
+  await recordMigrationEvent(db, collectionName, migration, 'down')
+}
+
+export async function getAppliedMigrations(db: Db, collectionName: string): Promise<MigrationRef[]> {
+  return db
+    .collection<MigrationEventDocument>(collectionName)
+    .aggregate<MigrationRef>([
+      { $sort: { date: 1, _id: 1 } },
+      { $group: { _id: { version: '$version', file: '$file' }, direction: { $last: '$direction' } } },
+      { $match: { direction: 'up' } },
+      { $replaceWith: '$_id' }
+    ])
+    .toArray()
 }

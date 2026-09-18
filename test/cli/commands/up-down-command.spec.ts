@@ -66,11 +66,23 @@ exports.down = async (db) => { await db.collection('${sideEffectsCollection}').d
     assert.equal(markers.length, 1)
   })
 
-  it('rolls back applied migrations above the target version and removes their state', async () => {
+  it('rolls back applied migrations above the target version and marks them as no longer applied', async () => {
     await runDownCommand({ cwd: dir, targetVersion: '0.9.0' }, createSilentLogger())
     const markers = await db.collection(sideEffectsCollection).find({ marker: '1.0.0' }).toArray()
     assert.equal(markers.length, 0)
     assert.deepEqual(await getAppliedMigrations(db, stateCollection), [])
+  })
+
+  it('keeps the rollback in the state collection instead of deleting the migration history', async () => {
+    const events = await db
+      .collection(stateCollection)
+      .find({ version: '1.0.0', file: 'create-marker.js' })
+      .sort({ date: 1 })
+      .toArray()
+    assert.deepEqual(
+      events.map((event) => event.direction),
+      ['up', 'down']
+    )
   })
 })
 

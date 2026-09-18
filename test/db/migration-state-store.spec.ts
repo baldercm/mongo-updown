@@ -5,7 +5,7 @@ import { after, before, describe, it } from 'node:test'
 import type { Db, MongoClient } from 'mongodb'
 
 import { connect } from '#Db/connect'
-import { getAppliedMigrations, recordAppliedMigration, removeAppliedMigration } from '#Db/migration-state-store'
+import { getAppliedMigrations, recordMigrationDown, recordMigrationUp } from '#Db/migration-state-store'
 
 describe('migration-state-store', () => {
   let client: MongoClient
@@ -25,21 +25,47 @@ describe('migration-state-store', () => {
     assert.deepEqual(await getAppliedMigrations(db, collectionName), [])
   })
 
-  it('records an applied migration so it is returned afterwards', async () => {
-    await recordAppliedMigration(db, collectionName, { version: '1.0.0', file: 'create-users.js' })
+  it('records an "up" event so the migration is returned as applied', async () => {
+    await recordMigrationUp(db, collectionName, { version: '1.0.0', file: 'create-users.js' })
     assert.deepEqual(await getAppliedMigrations(db, collectionName), [{ version: '1.0.0', file: 'create-users.js' }])
   })
 
-  it('removes an applied migration so it is no longer returned', async () => {
-    await recordAppliedMigration(db, collectionName, { version: '1.2.0', file: 'add-index.js' })
-    await removeAppliedMigration(db, collectionName, { version: '1.0.0', file: 'create-users.js' })
+  it('records a "down" event so the migration is no longer returned as applied, without deleting its history', async () => {
+    await recordMigrationUp(db, collectionName, { version: '1.2.0', file: 'add-index.js' })
+    await recordMigrationDown(db, collectionName, { version: '1.0.0', file: 'create-users.js' })
+
     assert.deepEqual(await getAppliedMigrations(db, collectionName), [{ version: '1.2.0', file: 'add-index.js' }])
+
+    const history = await db.collection(collectionName).find({ version: '1.0.0', file: 'create-users.js' }).toArray()
+    assert.deepEqual(
+      history.map((doc) => doc.direction),
+      ['up', 'down']
+    )
   })
 
-  it('does not persist extra fields (e.g. filePath) beyond version/file/appliedAt', async () => {
+  it('is applied again after a "down" is followed by another "up", keeping every event', async () => {
+    await recordMigrationUp(db, collectionName, { version: '1.0.0', file: 'create-users.js' })
+
+    const applied = await getAppliedMigrations(db, collectionName)
+    assert.deepEqual(
+      applied.sort((a, b) => a.version.localeCompare(b.version)),
+      [
+        { version: '1.0.0', file: 'create-users.js' },
+        { version: '1.2.0', file: 'add-index.js' }
+      ]
+    )
+
+    const history = await db.collection(collectionName).find({ version: '1.0.0', file: 'create-users.js' }).toArray()
+    assert.deepEqual(
+      history.map((doc) => doc.direction),
+      ['up', 'down', 'up']
+    )
+  })
+
+  it('does not persist extra fields (e.g. filePath) beyond version/file/direction/date', async () => {
     const migrationWithExtraField = { version: '2.0.0', file: 'add-orders.js', filePath: '/abs/path/add-orders.js' }
-    await recordAppliedMigration(db, collectionName, migrationWithExtraField)
+    await recordMigrationUp(db, collectionName, migrationWithExtraField)
     const stored = await db.collection(collectionName).findOne({ version: '2.0.0' })
-    assert.deepEqual(Object.keys(stored ?? {}).sort(), ['_id', 'appliedAt', 'file', 'version'])
+    assert.deepEqual(Object.keys(stored ?? {}).sort(), ['_id', 'date', 'direction', 'file', 'version'])
   })
 })
