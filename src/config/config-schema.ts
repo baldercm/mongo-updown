@@ -12,6 +12,7 @@ export interface MongoUpdownConfig {
   readonly mongoUri: MongoUriSource
   readonly migrationsDir: string
   readonly stateCollection: string
+  readonly phases: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -27,6 +28,7 @@ export function isMongoUpdownConfig(value: unknown): value is MongoUpdownConfig 
     isRecord(value) &&
     isMongoUriSource(value.mongoUri) &&
     typeof value.migrationsDir === 'string' &&
-    typeof value.stateCollection === 'string'
+    typeof value.stateCollection === 'string' &&
+    typeof value.phases === 'boolean'
   )
 }

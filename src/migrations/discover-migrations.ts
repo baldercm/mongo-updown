@@ -14,7 +14,7 @@ function isMigrationFile(entry: Dirent): boolean {
   return entry.isFile() && entry.name.endsWith('.js')
 }
 
-async function discoverVersionMigrations(migrationsDir: string, version: string): Promise<DiscoveredMigration[]> {
+async function discoverPhasedVersionMigrations(migrationsDir: string, version: string): Promise<DiscoveredMigration[]> {
   const versionDir = join(migrationsDir, version)
   const entries = await readdir(versionDir, { withFileTypes: true })
 
@@ -50,7 +50,33 @@ async function discoverVersionMigrations(migrationsDir: string, version: string)
   return migrationsByPhase.flat()
 }
 
-export async function discoverMigrations(migrationsDir: string): Promise<DiscoveredMigration[]> {
+async function discoverFlatVersionMigrations(migrationsDir: string, version: string): Promise<DiscoveredMigration[]> {
+  const versionDir = join(migrationsDir, version)
+  const entries = await readdir(versionDir, { withFileTypes: true })
+
+  const unexpectedSubdir = entries.find((entry) => entry.isDirectory())
+  if (unexpectedSubdir) {
+    throw new Error(
+      `Unexpected subdirectory "${unexpectedSubdir.name}" in version ${version}: this project's config has ` +
+        '"phases: false", so migrations must be plain .js files directly in the version directory.'
+    )
+  }
+
+  return entries.filter(isMigrationFile).map((fileEntry) => ({
+    version,
+    file: fileEntry.name,
+    filePath: join(versionDir, fileEntry.name)
+  }))
+}
+
+export interface DiscoverMigrationsOptions {
+  readonly phases: boolean
+}
+
+export async function discoverMigrations(
+  migrationsDir: string,
+  options: DiscoverMigrationsOptions
+): Promise<DiscoveredMigration[]> {
   let versionEntries
   try {
     versionEntries = await readdir(migrationsDir, { withFileTypes: true })
@@ -63,6 +89,7 @@ export async function discoverMigrations(migrationsDir: string): Promise<Discove
     parseSemver(versionDir.name)
   }
 
+  const discoverVersionMigrations = options.phases ? discoverPhasedVersionMigrations : discoverFlatVersionMigrations
   const migrationsByVersion = await Promise.all(
     versionDirs.map((versionEntry) => discoverVersionMigrations(migrationsDir, versionEntry.name))
   )

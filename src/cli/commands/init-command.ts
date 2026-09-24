@@ -10,10 +10,11 @@ import { CONFIG_FILE_NAME } from '#Config/load-config'
 export interface InitCommandOptions {
   readonly cwd: string
   readonly force: boolean
+  readonly phases: boolean
 }
 
 export async function runInitCommand(options: InitCommandOptions, logger: Logger): Promise<void> {
-  const { cwd, force } = options
+  const { cwd, force, phases } = options
   const configPath = join(cwd, CONFIG_FILE_NAME)
 
   if (existsSync(configPath) && !force) {
@@ -21,7 +22,7 @@ export async function runInitCommand(options: InitCommandOptions, logger: Logger
   }
 
   const moduleType = await detectHostModuleType(cwd)
-  await writeFile(configPath, buildDefaultConfigContent(moduleType))
+  await writeFile(configPath, buildDefaultConfigContent(moduleType, phases))
   await mkdir(join(cwd, DEFAULT_MIGRATIONS_DIR), { recursive: true })
 
   logger.success(`Wrote ${CONFIG_FILE_NAME} and created ${DEFAULT_MIGRATIONS_DIR}`)

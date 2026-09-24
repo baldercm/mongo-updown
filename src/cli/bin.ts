@@ -10,11 +10,13 @@ import { consoleLogger } from '#Common/logger'
 const HELP_TEXT = `Usage: mongo-updown <command> [options]
 
 Commands:
-  init [--force]                              Write mongo-updown.config.js and create the migrations directory
-  up <version> <file?> --phase <pre|post>     Apply pending <phase> migrations up to and including <version>
-  down <version> <file?> --phase <pre|post>   Roll back applied <phase> migrations from <version> upward
+  init [--force] [--phases <true|false>]        Write mongo-updown.config.js and create the migrations directory
+  up <version> <file?> [--phase <pre|post>]     Apply pending migrations up to and including <version>
+  down <version> <file?> [--phase <pre|post>]   Roll back applied migrations from <version> upward
 
-  Phases: "pre" runs before deploying the application, "post" runs after it.
+  --phase is required when this project's config has "phases: true", and must be omitted when it
+  has "phases: false". Phases: "pre" runs before deploying the application, "post" runs after it.
+  init's --phases defaults to true, controlling what it writes into the generated config.
 
 Options:
   -h, --help      Show this help message
@@ -42,7 +44,7 @@ async function main(): Promise<void> {
   }
 
   if (command.kind === 'init') {
-    await runInitCommand({ cwd, force: command.force }, consoleLogger)
+    await runInitCommand({ cwd, force: command.force, phases: command.phases }, consoleLogger)
     return
   }
 

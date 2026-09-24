@@ -126,3 +126,41 @@ describe('migration-state-store', () => {
     )
   })
 })
+
+describe('migration-state-store phaseless migrations', () => {
+  let client: MongoClient
+  let db: Db
+  const collectionName = `mongo_updown_migrations_test_phaseless_${randomUUID()}`
+
+  before(async () => {
+    ;({ client, db } = await connect('mongodb://localhost:27017/mongo_updown_test'))
+  })
+
+  after(async () => {
+    await db.collection(collectionName).drop()
+    await client.close()
+  })
+
+  it('records an "up" event with no phase field, returned by getAppliedMigrations without a phase key', async () => {
+    await recordMigrationUp(db, collectionName, { version: '5.0.0', file: 'flat.js' })
+    const applied = await getAppliedMigrations(db, collectionName)
+    assert.deepEqual(applied, [{ version: '5.0.0', file: 'flat.js' }])
+    assert.deepEqual(Object.keys(applied[0] ?? {}).sort(), ['file', 'version'])
+  })
+
+  it('stores the document without a phase key at all (not null)', async () => {
+    await recordMigrationUp(db, collectionName, { version: '5.1.0', file: 'flat-2.js' })
+    const stored = await db.collection(collectionName).findOne({ version: '5.1.0' })
+    assert.deepEqual(Object.keys(stored ?? {}).sort(), ['_id', 'date', 'direction', 'file', 'version'])
+  })
+
+  it('records a "down" event with no phase, and getAppliedMigrations no longer returns it', async () => {
+    await recordMigrationUp(db, collectionName, { version: '5.2.0', file: 'flat-3.js' })
+    await recordMigrationDown(db, collectionName, { version: '5.2.0', file: 'flat-3.js' })
+    const applied = await getAppliedMigrations(db, collectionName)
+    assert.deepEqual(
+      applied.filter((migration) => migration.version === '5.2.0'),
+      []
+    )
+  })
+})

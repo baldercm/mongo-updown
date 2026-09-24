@@ -18,28 +18,37 @@ CLI usage:
 
 ```shell
 npm i -D mongo-updown mongodb
-npx mongo-updown init
-npx mongo-updown up <version> <file?> --phase <pre|post>
-npx mongo-updown down <version> <file?> --phase <pre|post>
+npx mongo-updown init [--phases <true|false>]
+npx mongo-updown up <version> <file?> [--phase <pre|post>]
+npx mongo-updown down <version> <file?> [--phase <pre|post>]
 ```
 
 ## Architecture
 
-- **`up <version> <file?> --phase <pre|post>`** applies every pending migration of that phase up to
-  and including `<version>`, in order; `down <version> <file?> --phase <pre|post>` rolls back everything
-  of that phase applied from `<version>` upward, inclusive. `<file?>` narrows either command to a single
-  migration file within the target version and phase. `--phase` is **required** (missing or any value
-  other than `pre`/`post` throws a usage error) so a deploy pipeline can never run the wrong phase by
-  accident; each run executes exactly one phase.
-- **Deployment phases**: `pre` migrations run before the new app version is deployed (additive,
-  backward-compatible changes), `post` migrations run after it (destructive/cleanup changes). The
-  phase is part of a migration's identity — `MigrationRef` is `{ version, phase, file }`, so
-  `1.2.0/pre/x.js` and `1.2.0/post/x.js` are distinct migrations.
+- **`up <version> <file?> [--phase <pre|post>]`** applies every pending migration (of that phase, if
+  phases are enabled) up to and including `<version>`, in order; `down <version> <file?> [--phase
+<pre|post>]` rolls back everything (of that phase) applied from `<version>` upward, inclusive.
+  `<file?>` narrows either command to a single migration file within the target version (and phase).
+  Whether `--phase` is required depends on the project's config: `phases: true` requires it (missing
+  or any value other than `pre`/`post` throws a usage error) so a deploy pipeline can never run the
+  wrong phase by accident, while `phases: false` forbids it (given anyway throws a usage error) since
+  there's no phase to select. Since `parseCliArgs` (`src/cli/dispatch.ts`) runs before the config file
+  is loaded, it only enforces the value-shape check (`pre`/`post` when given); the phases-vs-`--phase`
+  requiredness check itself lives in `runMigrationCommand` (`src/cli/commands/run-migration-command.ts`),
+  right after `loadConfig`, before any network connection. Each run executes exactly one phase (or,
+  in phaseless mode, the entire flat set).
+- **Deployment phases** (only meaningful when the config has `phases: true`): `pre` migrations run
+  before the new app version is deployed (additive, backward-compatible changes), `post` migrations
+  run after it (destructive/cleanup changes). The phase is part of a migration's identity —
+  `MigrationRef` is `{ version, phase?, file }`, so `1.2.0/pre/x.js` and `1.2.0/post/x.js` are distinct
+  migrations. With `phases: false`, `MigrationRef.phase` is omitted entirely (never `null`, never a
+  sentinel) — identity is just `{ version, file }`.
 - **Phase ordering guard**: `computeMigrationPlan` (`src/migrations/migration-plan.ts`) throws, listing
   the blocking migrations, when `up X --phase post` is requested while any `pre` migration ≤ X is still
   pending, or when `down X --phase pre` is requested while any `post` migration ≥ X is still applied.
   The guard applies even when `<file?>` is given, and since the plan is computed before anything runs,
-  a guard failure runs nothing.
+  a guard failure runs nothing. The guard is a no-op (returns immediately) when `options.phase` is
+  `undefined` — there's no ordering concept without phases.
 - **`--help`/`-h`** prints usage and exits 0; **`--version`/`-v`** prints the installed package
   version (read from `package.json` at runtime, resolved relative to `bin.ts`/`bin.js` so it works
   in both dev and the compiled `dist/` output) and exits 0. Recognized only as the first argument.
@@ -47,23 +56,34 @@ npx mongo-updown down <version> <file?> --phase <pre|post>
   printing usage and exiting 0, instead of throwing an "unknown command" error — an unrecognized
   command name (e.g. `npx mongo-updown frobnicate`) still throws.
 - **Versions are semver strings** (`major.minor.patch`), compared with semver rules.
-- **Migration layout**: `<migrationsDir>/<version>/<phase>/<filename>.js` — the version and phase are
-  directory names, not part of the filename (e.g. `migrations/1.2.0/pre/add-user-index.js`). Discovery
-  rejects (throws on) any `.js` file placed directly in a version directory and any subdirectory other
-  than `pre`/`post`; non-`.js` files are ignored. Either phase directory may be absent. Migration files must
-  already be compiled `.js`; mongo-updown does no TypeScript execution of user migrations, just a
-  plain dynamic `import()`. Each file exports `up(ctx)` / `down(ctx)`, taking a single
-  `MigrationContext` `{ db, client, session }`, and may export `transaction = true` (any non-boolean value is a load error).
+- **Migration layout** depends on the config's `phases` field, passed into `discoverMigrations`
+  (`src/migrations/discover-migrations.ts`) as `{ phases: boolean }`:
+  - `phases: true`: `<migrationsDir>/<version>/<phase>/<filename>.js` — the version and phase are
+    directory names, not part of the filename (e.g. `migrations/1.2.0/pre/add-user-index.js`).
+    Discovery rejects (throws on) any `.js` file placed directly in a version directory and any
+    subdirectory other than `pre`/`post`; non-`.js` files are ignored. Either phase directory may be
+    absent.
+  - `phases: false`: `<migrationsDir>/<version>/<filename>.js` — migrations are plain `.js` files
+    directly in the version directory. Discovery rejects (throws on) **any** subdirectory found
+    there, including one literally named `pre` or `post` (e.g. a leftover from switching modes);
+    non-`.js` files are still ignored.
+  - Migration files must already be compiled `.js`; mongo-updown does no TypeScript execution of
+    user migrations, just a plain dynamic `import()`. Each file exports `up(ctx)` / `down(ctx)`,
+    taking a single `MigrationContext` `{ db, client, session }`, and may export `transaction = true`
+    (any non-boolean value is a load error).
 - **State tracking**: a dedicated collection (default `mongo_updown_migrations`) is an
-  append-only event log — documents are shaped `{ version, phase, file, direction, date }`
+  append-only event log — documents are shaped `{ version, phase?, file, direction, date }`
   (`direction: 'up' | 'down'`) and are never deleted or updated, so the full migration history is
-  always recoverable. `recordMigrationUp`/`recordMigrationDown` (`src/db/migration-state-store.ts`)
-  each just `insertOne` a new event with their respective direction; there is no delete path.
-  `getAppliedMigrations` derives "currently applied" (used to diff against "on disk") via a
-  `$sort`/`$group`(`$last`)/`$match` aggregation pipeline run inside MongoDB, rather than fetching
-  the whole (ever-growing) event log into the process — it groups by `{ version, phase, file }`, keeps
-  only the direction of each group's most recent event, and returns the ones whose latest direction
-  is `'up'`. A migration rolled back and never reapplied has a `'down'` event as its latest and is
+  always recoverable. When `phase` is absent (phaseless migrations), it is genuinely omitted from
+  the stored document, never written as `null`. `recordMigrationUp`/`recordMigrationDown`
+  (`src/db/migration-state-store.ts`) each just `insertOne` a new event with their respective
+  direction; there is no delete path. `getAppliedMigrations` derives "currently applied" (used to
+  diff against "on disk") via a `$sort`/`$group`(`$last`)/`$match` aggregation pipeline run inside
+  MongoDB, rather than fetching the whole (ever-growing) event log into the process — it groups by
+  `{ version, phase, file }` (a missing `phase` groups like `null`), keeps only the direction of
+  each group's most recent event, and returns the ones whose latest direction is `'up'`, using
+  `$ifNull`/`$$REMOVE` so a phaseless result also omits `phase` rather than returning it as `null`.
+  A migration rolled back and never reapplied has a `'down'` event as its latest and is
   therefore excluded.
 - **Failure behavior**: `runMigrationCommand` (`src/cli/commands/run-migration-command.ts`) runs a
   plan sequentially and stops at the first throw, leaving earlier steps in that run applied/rolled
@@ -96,7 +116,10 @@ npx mongo-updown down <version> <file?> --phase <pre|post>
   one unless `--force`) never contains a raw connection string — `mongoUri` is
   `{ fromEnv: string } | { fromFile: string }`, resolved to the actual URI only right before
   connecting. This keeps the config file safe to commit; a `fromFile` secrets file must be
-  gitignored.
+  gitignored. `phases: boolean` is **required** — `isMongoUpdownConfig` rejects a config missing it
+  or where it isn't a boolean; there is no implicit default anywhere in the schema or loader.
+  `init` accepts `--phases <true|false>` (default `true`) to control what it scaffolds into the
+  generated config — that's just the template's chosen content, not a schema fallback.
 - **MongoDB driver** (`mongodb`) is a `peerDependency` (`^7.0.0`), not bundled — the host project
   controls the installed driver version.
 - **Module boundaries** under `src/`: `cli/` (argv parsing + `init`/`up`/`down` commands),

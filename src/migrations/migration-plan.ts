@@ -12,13 +12,13 @@ export function isMigrationPhase(value: string | undefined): value is MigrationP
 
 export interface MigrationRef {
   readonly version: string
-  readonly phase: MigrationPhase
+  readonly phase?: MigrationPhase
   readonly file: string
 }
 
 export interface ComputeMigrationPlanOptions {
   readonly direction: MigrationDirection
-  readonly phase: MigrationPhase
+  readonly phase?: MigrationPhase
   readonly targetVersion: string
   readonly targetFile?: string
   readonly applied: readonly MigrationRef[]
@@ -29,12 +29,18 @@ function isSameMigration(a: MigrationRef, b: MigrationRef): boolean {
   return a.version === b.version && a.phase === b.phase && a.file === b.file
 }
 
-function toMigrationRef(migration: MigrationRef): MigrationRef {
-  return { version: migration.version, phase: migration.phase, file: migration.file }
+function makeMigrationRef(version: string, file: string, phase: MigrationPhase | undefined): MigrationRef {
+  return phase === undefined ? { version, file } : { version, phase, file }
 }
 
-function formatMigrationRef(migration: MigrationRef): string {
-  return `${migration.version}/${migration.phase}/${migration.file}`
+function toMigrationRef(migration: MigrationRef): MigrationRef {
+  return makeMigrationRef(migration.version, migration.file, migration.phase)
+}
+
+export function formatMigrationRef(migration: MigrationRef): string {
+  return migration.phase === undefined
+    ? `${migration.version}/${migration.file}`
+    : `${migration.version}/${migration.phase}/${migration.file}`
 }
 
 function sortAscending(migrations: MigrationRef[]): MigrationRef[] {
@@ -65,6 +71,9 @@ function findAppliedFrom(targetVersion: string, applied: readonly MigrationRef[]
 
 function assertPhaseOrder(options: ComputeMigrationPlanOptions): void {
   const { direction, phase, targetVersion, applied, discovered } = options
+  if (phase === undefined) {
+    return
+  }
 
   if (direction === 'up' && phase === 'post') {
     const pendingPre = findPendingUpTo(
@@ -101,7 +110,7 @@ export function computeMigrationPlan(options: ComputeMigrationPlanOptions): Migr
   const discovered = options.discovered.filter((migration) => migration.phase === phase)
 
   if (targetFile !== undefined) {
-    const target: MigrationRef = { version: targetVersion, phase, file: targetFile }
+    const target: MigrationRef = makeMigrationRef(targetVersion, targetFile, phase)
     const isApplied = applied.some((migration) => isSameMigration(migration, target))
     if (direction === 'up') {
       const isDiscovered = discovered.some((migration) => isSameMigration(migration, target))

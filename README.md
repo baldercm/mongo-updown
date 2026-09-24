@@ -23,25 +23,28 @@ Create the default configuration file:
 
 ```shell
 npx mongo-updown init
+# or, to scaffold a project without deployment phases:
+npx mongo-updown init --phases false
 ```
 
 Run migrations up to and including a version:
 
 ```shell
-npx mongo-updown up <version> <file?> --phase <pre|post>
+npx mongo-updown up <version> <file?> [--phase <pre|post>]
 ```
 
 Roll back migrations down to a version:
 
 ```shell
-npx mongo-updown down <version> <file?> --phase <pre|post>
+npx mongo-updown down <version> <file?> [--phase <pre|post>]
 ```
 
-`<version>` is a semantic version string (e.g. `1.2.0`). `up` runs every pending migration of the
-given phase up to and including that version, in order; `down` rolls back every applied migration
-of the given phase from that version upward, inclusive. The optional `<file?>` narrows either
-command to a single migration file within that version and phase. `--phase` is required — see
-[Deployment phases](#deployment-phases).
+`<version>` is a semantic version string (e.g. `1.2.0`). `up` runs every pending migration up to
+and including that version, in order; `down` rolls back every applied migration from that version
+upward, inclusive. The optional `<file?>` narrows either command to a single migration file within
+that version. Whether `--phase` is required depends on the project's config: it's required when
+`phases: true` and must be omitted when `phases: false` — see [Deployment
+phases](#deployment-phases).
 
 Show usage help or the installed version:
 
@@ -56,11 +59,16 @@ npx mongo-updown --version
 
 ```js
 module.exports = {
+  phases: true,
   mongoUri: { fromEnv: 'MONGO_URI' },
   migrationsDir: './migrations',
   stateCollection: 'mongo_updown_migrations'
 }
 ```
+
+`phases` (required, `boolean`) — whether migrations are split into `pre`/`post` [deployment
+phases](#deployment-phases) (`true`) or run as a single flat, ordered set (`false`). There's no
+default: every config must set it explicitly.
 
 The config file never contains a raw connection string, so it's always safe to commit. `mongoUri`
 is a pointer to where the connection string actually lives:
@@ -75,8 +83,11 @@ to the database named in the URI, and the MongoDB driver throws if none is prese
 
 ## Writing migrations
 
-Migrations live under `migrationsDir`, one subdirectory per version, and inside it one
-subdirectory per [deployment phase](#deployment-phases) — `pre/` and/or `post/`:
+Migrations live under `migrationsDir`, one subdirectory per version. The layout inside each
+version directory depends on the config's `phases` field.
+
+With `phases: true`, each version directory has one subdirectory per [deployment
+phase](#deployment-phases) — `pre/` and/or `post/`:
 
 ```
 migrations/
@@ -92,6 +103,22 @@ migrations/
 
 Every migration must live in a phase subdirectory: a `.js` file placed directly in a version
 directory, or any subdirectory other than `pre/`/`post/`, is rejected with an error.
+
+With `phases: false`, migration files live directly in their version directory — there are no
+phase subdirectories at all:
+
+```
+migrations/
+  1.0.0/
+    create-users-collection.js
+  1.2.0/
+    add-user-email-index.js
+    drop-legacy-username-field.js
+```
+
+Any subdirectory found under a version directory in this mode — including a leftover `pre/` or
+`post/` from switching modes — is rejected with an error, since flat mode expects only `.js`
+files there.
 
 Each migration file exports `up` and `down`. Both receive a single context object,
 `{ db, client, session }`:
@@ -116,6 +143,10 @@ TypeScript at runtime. If you write migrations in TypeScript, compile them befor
 `down`.
 
 ## Deployment phases
+
+This section applies only when the project's config has `phases: true`. With `phases: false`,
+there's no phase concept at all: `up`/`down` runs the entire flat set of migrations in one command,
+with no phase-ordering guard.
 
 Every migration belongs to one of two phases, chosen by the subdirectory it lives in:
 

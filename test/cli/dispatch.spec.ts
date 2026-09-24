@@ -21,11 +21,23 @@ describe('parseCliArgs', () => {
   })
 
   it('parses "init" with no flags', () => {
-    assert.deepEqual(parseCliArgs(['init']), { kind: 'init', force: false })
+    assert.deepEqual(parseCliArgs(['init']), { kind: 'init', force: false, phases: true })
   })
 
   it('parses "init --force"', () => {
-    assert.deepEqual(parseCliArgs(['init', '--force']), { kind: 'init', force: true })
+    assert.deepEqual(parseCliArgs(['init', '--force']), { kind: 'init', force: true, phases: true })
+  })
+
+  it('parses "init --phases false"', () => {
+    assert.deepEqual(parseCliArgs(['init', '--phases', 'false']), { kind: 'init', force: false, phases: false })
+  })
+
+  it('parses "init --phases true"', () => {
+    assert.deepEqual(parseCliArgs(['init', '--phases', 'true']), { kind: 'init', force: false, phases: true })
+  })
+
+  it('throws when init --phases is not true or false', () => {
+    assert.throws(() => parseCliArgs(['init', '--phases', 'maybe']), /usage.*--phases <true\|false>/i)
   })
 
   it('parses "up <version> --phase pre"', () => {
@@ -68,8 +80,22 @@ describe('parseCliArgs', () => {
     assert.throws(() => parseCliArgs(['up', '--phase', 'pre']), /usage/i)
   })
 
-  it('throws when up/down is missing --phase', () => {
-    assert.throws(() => parseCliArgs(['up', '1.2.0']), /usage.*--phase <pre\|post>/i)
+  it('parses "up <version>" with no --phase, producing phase: undefined', () => {
+    assert.deepEqual(parseCliArgs(['up', '1.2.0']), {
+      kind: 'up',
+      targetVersion: '1.2.0',
+      targetFile: undefined,
+      phase: undefined
+    })
+  })
+
+  it('parses "down <version> <file>" with no --phase, producing phase: undefined', () => {
+    assert.deepEqual(parseCliArgs(['down', '1.0.0', 'seed.js']), {
+      kind: 'down',
+      targetVersion: '1.0.0',
+      targetFile: 'seed.js',
+      phase: undefined
+    })
   })
 
   it('throws when --phase is not pre or post', () => {

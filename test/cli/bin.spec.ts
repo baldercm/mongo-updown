@@ -37,16 +37,41 @@ describe('mongo-updown CLI', () => {
     assert.match(result.stdout, /usage/i)
   })
 
-  it('documents the required --phase option in the usage text', async () => {
+  it('documents the conditionally-required --phase option and the init --phases flag in the usage text', async () => {
     const result = await runCli(['--help'], dir)
-    assert.match(result.stdout, /up <version> <file\?> --phase <pre\|post>/)
-    assert.match(result.stdout, /down <version> <file\?> --phase <pre\|post>/)
+    assert.match(result.stdout, /up <version> <file\?> \[--phase <pre\|post>\]/)
+    assert.match(result.stdout, /down <version> <file\?> \[--phase <pre\|post>\]/)
+    assert.match(result.stdout, /init \[--force\] \[--phases <true\|false>\]/)
   })
 
-  it('exits non-zero with a usage message when up is run without --phase', async () => {
+  it('exits non-zero when up is run without a config file present', async () => {
     const result = await runCli(['up', '1.0.0'], dir)
     assert.equal(result.code, 1)
-    assert.match(result.stderr, /usage.*--phase <pre\|post>/i)
+    assert.match(result.stderr, /config file not found/i)
+  })
+
+  it('exits non-zero with a usage message when up is run without --phase, in a phases: true project', async () => {
+    const phasedDir = await mkdtemp(join(tmpdir(), 'mongo-updown-bin-phased-'))
+    try {
+      await runCli(['init'], phasedDir)
+      const result = await runCli(['up', '1.0.0'], phasedDir)
+      assert.equal(result.code, 1)
+      assert.match(result.stderr, /usage.*--phase <pre\|post>/i)
+    } finally {
+      await rm(phasedDir, { recursive: true, force: true })
+    }
+  })
+
+  it('exits non-zero with a usage message when --phase is given in a phases: false project', async () => {
+    const phaselessDir = await mkdtemp(join(tmpdir(), 'mongo-updown-bin-phaseless-'))
+    try {
+      await runCli(['init', '--phases', 'false'], phaselessDir)
+      const result = await runCli(['up', '1.0.0', '--phase', 'pre'], phaselessDir)
+      assert.equal(result.code, 1)
+      assert.match(result.stderr, /phases.*false.*--phase must not be given/i)
+    } finally {
+      await rm(phaselessDir, { recursive: true, force: true })
+    }
   })
 
   it('prints usage and exits 0 for "-h"', async () => {
@@ -74,6 +99,19 @@ describe('mongo-updown CLI', () => {
     assert.equal(result.code, 0)
     const content = await readFile(join(dir, 'mongo-updown.config.js'), 'utf8')
     assert.match(content, /module\.exports/)
+    assert.match(content, /phases: true/)
+  })
+
+  it('runs "init --phases false" and writes a config file with phases: false', async () => {
+    const phaselessDir = await mkdtemp(join(tmpdir(), 'mongo-updown-bin-init-phaseless-'))
+    try {
+      const result = await runCli(['init', '--phases', 'false'], phaselessDir)
+      assert.equal(result.code, 0)
+      const content = await readFile(join(phaselessDir, 'mongo-updown.config.js'), 'utf8')
+      assert.match(content, /phases: false/)
+    } finally {
+      await rm(phaselessDir, { recursive: true, force: true })
+    }
   })
 
   it('exits non-zero with a message for an unknown command', async () => {

@@ -20,14 +20,31 @@ describe('loadConfig', () => {
   it('loads and validates a CommonJS-style config file', async () => {
     await writeFile(
       join(dir, CONFIG_FILE_NAME),
-      "module.exports = { mongoUri: { fromEnv: 'MONGO_URI' }, migrationsDir: './migrations', stateCollection: 'x' }\n"
+      "module.exports = { phases: true, mongoUri: { fromEnv: 'MONGO_URI' }, migrationsDir: './migrations', stateCollection: 'x' }\n"
     )
     const config = await loadConfig(dir)
     assert.deepEqual(config, {
+      phases: true,
       mongoUri: { fromEnv: 'MONGO_URI' },
       migrationsDir: './migrations',
       stateCollection: 'x'
     })
+  })
+
+  it('loads and validates a config file with phases: false', async () => {
+    const phaselessDir = await mkdtemp(join(tmpdir(), 'mongo-updown-load-config-phaseless-'))
+    await writeFile(
+      join(phaselessDir, CONFIG_FILE_NAME),
+      "module.exports = { phases: false, mongoUri: { fromEnv: 'MONGO_URI' }, migrationsDir: './migrations', stateCollection: 'x' }\n"
+    )
+    const config = await loadConfig(phaselessDir)
+    assert.deepEqual(config, {
+      phases: false,
+      mongoUri: { fromEnv: 'MONGO_URI' },
+      migrationsDir: './migrations',
+      stateCollection: 'x'
+    })
+    await rm(phaselessDir, { recursive: true, force: true })
   })
 
   it('throws when the config file does not exist', async () => {
@@ -37,6 +54,16 @@ describe('loadConfig', () => {
   it('throws when the config file does not match the expected shape', async () => {
     const badDir = await mkdtemp(join(tmpdir(), 'mongo-updown-load-config-bad-'))
     await writeFile(join(badDir, CONFIG_FILE_NAME), 'module.exports = { nope: true }\n')
+    await assert.rejects(loadConfig(badDir), /invalid/i)
+    await rm(badDir, { recursive: true, force: true })
+  })
+
+  it('throws when the config file is missing phases', async () => {
+    const badDir = await mkdtemp(join(tmpdir(), 'mongo-updown-load-config-missing-phases-'))
+    await writeFile(
+      join(badDir, CONFIG_FILE_NAME),
+      "module.exports = { mongoUri: { fromEnv: 'MONGO_URI' }, migrationsDir: './migrations', stateCollection: 'x' }\n"
+    )
     await assert.rejects(loadConfig(badDir), /invalid/i)
     await rm(badDir, { recursive: true, force: true })
   })

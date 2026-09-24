@@ -11,14 +11,14 @@ import { deploymentSupportsTransactions } from '#Db/transaction-support'
 import { discoverMigrations } from '#Migrations/discover-migrations'
 import type { LoadedMigration, MigrationContext } from '#Migrations/load-migration'
 import { loadMigration } from '#Migrations/load-migration'
-import { computeMigrationPlan } from '#Migrations/migration-plan'
+import { computeMigrationPlan, formatMigrationRef } from '#Migrations/migration-plan'
 import type { MigrationDirection, MigrationPhase, MigrationRef } from '#Migrations/migration-plan'
 
 export interface RunMigrationCommandOptions {
   readonly cwd: string
   readonly targetVersion: string
   readonly targetFile?: string
-  readonly phase: MigrationPhase
+  readonly phase?: MigrationPhase
 }
 
 export interface MigrationCommandStrategy {
@@ -81,6 +81,20 @@ export async function runMigrationCommand(
 ): Promise<void> {
   const { cwd, targetVersion, targetFile, phase } = options
   const config = await loadConfig(cwd)
+
+  if (config.phases && phase === undefined) {
+    throw new Error(
+      `Usage: mongo-updown ${strategy.direction} <version> <file?> --phase <pre|post> ` +
+        '("phases" is true in mongo-updown.config.js, so --phase is required)'
+    )
+  }
+  if (!config.phases && phase !== undefined) {
+    throw new Error(
+      `Usage: mongo-updown ${strategy.direction} <version> <file?> ` +
+        '("phases" is false in mongo-updown.config.js, so --phase must not be given)'
+    )
+  }
+
   const mongoUri = await resolveMongoUri(config.mongoUri, cwd)
   const migrationsDir = isAbsolute(config.migrationsDir) ? config.migrationsDir : join(cwd, config.migrationsDir)
 
@@ -88,7 +102,7 @@ export async function runMigrationCommand(
   try {
     const [applied, discovered] = await Promise.all([
       getAppliedMigrations(db, config.stateCollection),
-      discoverMigrations(migrationsDir)
+      discoverMigrations(migrationsDir, { phases: config.phases })
     ])
     const plan = computeMigrationPlan({
       direction: strategy.direction,
@@ -100,14 +114,14 @@ export async function runMigrationCommand(
     })
 
     if (plan.length === 0) {
-      logger.info(`Nothing to do for phase "${phase}".`)
+      logger.info(phase === undefined ? 'Nothing to do.' : `Nothing to do for phase "${phase}".`)
       return
     }
 
     // Load every planned migration before running any, so a broken file anywhere in the plan runs nothing.
     const steps: PlannedStep[] = []
     for (const migrationRef of plan) {
-      const migrationPath = `${migrationRef.version}/${migrationRef.phase}/${migrationRef.file}`
+      const migrationPath = formatMigrationRef(migrationRef)
       const discoveredMigration = discovered.find(
         (m) => m.version === migrationRef.version && m.phase === migrationRef.phase && m.file === migrationRef.file
       )

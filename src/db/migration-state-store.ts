@@ -17,7 +17,7 @@ async function recordMigrationEvent(
   await db.collection<MigrationEventDocument>(collectionName).insertOne(
     {
       version: migration.version,
-      phase: migration.phase,
+      ...(migration.phase !== undefined ? { phase: migration.phase } : {}),
       file: migration.file,
       direction,
       date: new Date()
@@ -51,7 +51,13 @@ export async function getAppliedMigrations(db: Db, collectionName: string): Prom
       { $sort: { date: 1, _id: 1 } },
       { $group: { _id: { version: '$version', phase: '$phase', file: '$file' }, direction: { $last: '$direction' } } },
       { $match: { direction: 'up' } },
-      { $replaceWith: '$_id' }
+      {
+        $replaceWith: {
+          version: '$_id.version',
+          phase: { $ifNull: ['$_id.phase', '$$REMOVE'] },
+          file: '$_id.file'
+        }
+      }
     ])
     .toArray()
 }

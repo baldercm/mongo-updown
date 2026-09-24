@@ -48,6 +48,7 @@ describe('runUpCommand / runDownCommand', () => {
     await writeFile(
       join(dir, 'mongo-updown.config.js'),
       `module.exports = {
+        phases: true,
         mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
         migrationsDir: './migrations',
         stateCollection: '${stateCollection}',
@@ -106,7 +107,7 @@ describe('runUpCommand / runDownCommand', () => {
     assert.equal(await markers('1.0.0-post'), 1)
     const applied = await getAppliedMigrations(db, stateCollection)
     assert.deepEqual(
-      applied.sort((a, b) => a.phase.localeCompare(b.phase)),
+      applied.sort((a, b) => (a.phase ?? '').localeCompare(b.phase ?? '')),
       [
         { version: '1.0.0', phase: 'post', file: 'create-marker.js' },
         { version: '1.0.0', phase: 'pre', file: 'create-marker.js' }
@@ -157,6 +158,7 @@ describe('runDownCommand when a previously applied migration file is missing on 
     await writeFile(
       join(dir, 'mongo-updown.config.js'),
       `module.exports = {
+        phases: true,
         mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
         migrationsDir: './migrations',
         stateCollection: '${stateCollection}',
@@ -206,6 +208,7 @@ describe('runDownCommand after an up run that failed partway through a version',
     await writeFile(
       join(dir, 'mongo-updown.config.js'),
       `module.exports = {
+        phases: true,
         mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
         migrationsDir: './migrations',
         stateCollection: '${stateCollection}',
@@ -289,6 +292,7 @@ describe('runUpCommand / runDownCommand with transactional migrations', () => {
     await writeFile(
       join(dir, 'mongo-updown.config.js'),
       `module.exports = {
+        phases: true,
         mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
         migrationsDir: './migrations',
         stateCollection: '${stateCollection}',
@@ -377,6 +381,7 @@ describe('runUpCommand when a later planned migration fails to load', () => {
     await writeFile(
       join(dir, 'mongo-updown.config.js'),
       `module.exports = {
+        phases: true,
         mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
         migrationsDir: './migrations',
         stateCollection: '${stateCollection}',
@@ -428,6 +433,7 @@ exports.down = async () => {}
     await writeFile(
       join(dir, 'mongo-updown.config.js'),
       `module.exports = {
+        phases: true,
         mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
         migrationsDir: './migrations',
         stateCollection: '${stateCollection}',
@@ -466,4 +472,109 @@ exports.down = async () => {}
       assert.equal(await db.collection(stateCollection).countDocuments({ file }), 0)
     })
   }
+})
+
+describe('runUpCommand / runDownCommand in phaseless mode (config phases: false)', () => {
+  let dir = ''
+  let client: MongoClient
+  let db: Db
+  const stateCollection = `mongo_updown_state_test_${randomUUID()}`
+  const sideEffectsCollection = `mongo_updown_side_effects_test_${randomUUID()}`
+
+  async function markers(marker: string): Promise<number> {
+    return db.collection(sideEffectsCollection).countDocuments({ marker })
+  }
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'mongo-updown-phaseless-command-'))
+    process.env.MONGO_UPDOWN_TEST_URI = 'mongodb://localhost:27017/mongo_updown_test'
+    await writeFile(
+      join(dir, 'mongo-updown.config.js'),
+      `module.exports = {
+        phases: false,
+        mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
+        migrationsDir: './migrations',
+        stateCollection: '${stateCollection}',
+      }\n`
+    )
+    await mkdir(join(dir, 'migrations', '1.0.0'), { recursive: true })
+    await writeFile(
+      join(dir, 'migrations', '1.0.0', 'create-marker.js'),
+      markerMigrationSource(sideEffectsCollection, '1.0.0-flat')
+    )
+    ;({ client, db } = await connect('mongodb://localhost:27017/mongo_updown_test'))
+  })
+
+  after(async () => {
+    await db.collection(stateCollection).drop()
+    await db.collection(sideEffectsCollection).drop()
+    await client.close()
+    delete process.env.MONGO_UPDOWN_TEST_URI
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('applies a flat migration with no --phase, recording it with no phase key', async () => {
+    const logger = createRecordingLogger()
+    await runUpCommand({ cwd: dir, targetVersion: '1.0.0' }, logger)
+    assert.equal(await markers('1.0.0-flat'), 1)
+    assert.deepEqual(await getAppliedMigrations(db, stateCollection), [{ version: '1.0.0', file: 'create-marker.js' }])
+    assert.ok(logger.messages.includes('Applying 1.0.0/create-marker.js...'))
+  })
+
+  it('is idempotent: running up again applies nothing further', async () => {
+    const logger = createRecordingLogger()
+    await runUpCommand({ cwd: dir, targetVersion: '1.0.0' }, logger)
+    assert.equal(await markers('1.0.0-flat'), 1)
+    assert.deepEqual(logger.messages, ['Nothing to do.'])
+  })
+
+  it('rejects when --phase is given for a phases: false project', async () => {
+    await assert.rejects(
+      runUpCommand({ cwd: dir, targetVersion: '1.0.0', phase: 'pre' }, createSilentLogger()),
+      /phases.*false.*--phase must not be given/i
+    )
+  })
+
+  it('rolls back the flat migration with no --phase', async () => {
+    const logger = createRecordingLogger()
+    await runDownCommand({ cwd: dir, targetVersion: '1.0.0' }, logger)
+    assert.equal(await markers('1.0.0-flat'), 0)
+    assert.deepEqual(await getAppliedMigrations(db, stateCollection), [])
+    assert.ok(logger.messages.includes('Rolling back 1.0.0/create-marker.js...'))
+  })
+})
+
+describe('runUpCommand rejects a missing --phase for a phases: true project', () => {
+  let dir = ''
+  let client: MongoClient
+  const stateCollection = `mongo_updown_state_test_${randomUUID()}`
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'mongo-updown-phased-missing-flag-'))
+    process.env.MONGO_UPDOWN_TEST_URI = 'mongodb://localhost:27017/mongo_updown_test'
+    await writeFile(
+      join(dir, 'mongo-updown.config.js'),
+      `module.exports = {
+        phases: true,
+        mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
+        migrationsDir: './migrations',
+        stateCollection: '${stateCollection}',
+      }\n`
+    )
+    await mkdir(join(dir, 'migrations', '1.0.0', 'pre'), { recursive: true })
+    ;({ client } = await connect('mongodb://localhost:27017/mongo_updown_test'))
+  })
+
+  after(async () => {
+    await client.close()
+    delete process.env.MONGO_UPDOWN_TEST_URI
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('rejects when --phase is omitted', async () => {
+    await assert.rejects(
+      runUpCommand({ cwd: dir, targetVersion: '1.0.0' }, createSilentLogger()),
+      /phases.*true.*--phase is required/i
+    )
+  })
 })

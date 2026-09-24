@@ -297,6 +297,89 @@ describe('computeMigrationPlan phases', () => {
   })
 })
 
+describe('computeMigrationPlan phaseless (options.phase undefined)', () => {
+  const phaselessDiscovered: MigrationRef[] = [
+    { version: '1.0.0', file: 'create-users.js' },
+    { version: '1.0.0', file: 'seed-admin.js' },
+    { version: '1.2.0', file: 'add-user-email-index.js' },
+    { version: '2.0.0', file: 'add-orders-collection.js' }
+  ]
+
+  it('strips extra fields and returns refs with exactly version/file, no phase key', () => {
+    const discoveredWithExtraField = [
+      { version: '1.0.0', file: 'create-users.js', filePath: '/abs/path/create-users.js' }
+    ]
+    const plan = computeMigrationPlan({
+      direction: 'up',
+      targetVersion: '1.0.0',
+      applied: [],
+      discovered: discoveredWithExtraField
+    })
+    assert.deepEqual(plan, [{ version: '1.0.0', file: 'create-users.js' }])
+    assert.deepEqual(Object.keys(plan[0] ?? {}).sort(), ['file', 'version'])
+  })
+
+  it('runs every pending migration up to and including the target version, ordered ascending', () => {
+    const plan = computeMigrationPlan({
+      direction: 'up',
+      targetVersion: '1.2.0',
+      applied: [],
+      discovered: phaselessDiscovered
+    })
+    assert.deepEqual(plan, [
+      { version: '1.0.0', file: 'create-users.js' },
+      { version: '1.0.0', file: 'seed-admin.js' },
+      { version: '1.2.0', file: 'add-user-email-index.js' }
+    ])
+  })
+
+  it('rolls back every applied migration from the target version upward, ordered descending', () => {
+    const plan = computeMigrationPlan({
+      direction: 'down',
+      targetVersion: '1.0.0',
+      applied: phaselessDiscovered,
+      discovered: phaselessDiscovered
+    })
+    assert.deepEqual(plan, [
+      { version: '2.0.0', file: 'add-orders-collection.js' },
+      { version: '1.2.0', file: 'add-user-email-index.js' },
+      { version: '1.0.0', file: 'seed-admin.js' },
+      { version: '1.0.0', file: 'create-users.js' }
+    ])
+  })
+
+  it('narrows to a single file within the target version when targetFile is given', () => {
+    const plan = computeMigrationPlan({
+      direction: 'up',
+      targetVersion: '1.0.0',
+      targetFile: 'seed-admin.js',
+      applied: [],
+      discovered: phaselessDiscovered
+    })
+    assert.deepEqual(plan, [{ version: '1.0.0', file: 'seed-admin.js' }])
+    assert.deepEqual(Object.keys(plan[0] ?? {}).sort(), ['file', 'version'])
+  })
+
+  it('never throws the phase-ordering guard when phase is undefined', () => {
+    assert.doesNotThrow(() =>
+      computeMigrationPlan({
+        direction: 'up',
+        targetVersion: '2.0.0',
+        applied: [],
+        discovered: phaselessDiscovered
+      })
+    )
+    assert.doesNotThrow(() =>
+      computeMigrationPlan({
+        direction: 'down',
+        targetVersion: '1.0.0',
+        applied: phaselessDiscovered,
+        discovered: phaselessDiscovered
+      })
+    )
+  })
+})
+
 describe('isMigrationPhase', () => {
   it('accepts "pre" and "post"', () => {
     assert.equal(isMigrationPhase('pre'), true)
