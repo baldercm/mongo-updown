@@ -37,6 +37,18 @@ describe('mongo-updown CLI', () => {
     assert.match(result.stdout, /usage/i)
   })
 
+  it('documents the required --phase option in the usage text', async () => {
+    const result = await runCli(['--help'], dir)
+    assert.match(result.stdout, /up <version> <file\?> --phase <pre\|post>/)
+    assert.match(result.stdout, /down <version> <file\?> --phase <pre\|post>/)
+  })
+
+  it('exits non-zero with a usage message when up is run without --phase', async () => {
+    const result = await runCli(['up', '1.0.0'], dir)
+    assert.equal(result.code, 1)
+    assert.match(result.stderr, /usage.*--phase <pre\|post>/i)
+  })
+
   it('prints usage and exits 0 for "-h"', async () => {
     const result = await runCli(['-h'], dir)
     assert.equal(result.code, 0)

@@ -19,15 +19,27 @@ CLI usage:
 ```shell
 npm i -D mongo-updown mongodb
 npx mongo-updown init
-npx mongo-updown up <version> <file?>
-npx mongo-updown down <version> <file?>
+npx mongo-updown up <version> <file?> --phase <pre|post>
+npx mongo-updown down <version> <file?> --phase <pre|post>
 ```
 
 ## Architecture
 
-- **`up <version> <file?>`** applies every pending migration up to and including `<version>`, in
-  order; `down <version> <file?>` rolls back everything applied from `<version>` upward, inclusive. `<file?>`
-  narrows either command to a single migration file within the target version.
+- **`up <version> <file?> --phase <pre|post>`** applies every pending migration of that phase up to
+  and including `<version>`, in order; `down <version> <file?> --phase <pre|post>` rolls back everything
+  of that phase applied from `<version>` upward, inclusive. `<file?>` narrows either command to a single
+  migration file within the target version and phase. `--phase` is **required** (missing or any value
+  other than `pre`/`post` throws a usage error) so a deploy pipeline can never run the wrong phase by
+  accident; each run executes exactly one phase.
+- **Deployment phases**: `pre` migrations run before the new app version is deployed (additive,
+  backward-compatible changes), `post` migrations run after it (destructive/cleanup changes). The
+  phase is part of a migration's identity — `MigrationRef` is `{ version, phase, file }`, so
+  `1.2.0/pre/x.js` and `1.2.0/post/x.js` are distinct migrations.
+- **Phase ordering guard**: `computeMigrationPlan` (`src/migrations/migration-plan.ts`) throws, listing
+  the blocking migrations, when `up X --phase post` is requested while any `pre` migration ≤ X is still
+  pending, or when `down X --phase pre` is requested while any `post` migration ≥ X is still applied.
+  The guard applies even when `<file?>` is given, and since the plan is computed before anything runs,
+  a guard failure runs nothing.
 - **`--help`/`-h`** prints usage and exits 0; **`--version`/`-v`** prints the installed package
   version (read from `package.json` at runtime, resolved relative to `bin.ts`/`bin.js` so it works
   in both dev and the compiled `dist/` output) and exits 0. Recognized only as the first argument.
@@ -35,18 +47,20 @@ npx mongo-updown down <version> <file?>
   printing usage and exiting 0, instead of throwing an "unknown command" error — an unrecognized
   command name (e.g. `npx mongo-updown frobnicate`) still throws.
 - **Versions are semver strings** (`major.minor.patch`), compared with semver rules.
-- **Migration layout**: `<migrationsDir>/<version>/<filename>.js` — the version is the directory
-  name, not part of the filename (e.g. `migrations/1.2.0/add-user-index.js`). Migration files must
+- **Migration layout**: `<migrationsDir>/<version>/<phase>/<filename>.js` — the version and phase are
+  directory names, not part of the filename (e.g. `migrations/1.2.0/pre/add-user-index.js`). Discovery
+  rejects (throws on) any `.js` file placed directly in a version directory and any subdirectory other
+  than `pre`/`post`; non-`.js` files are ignored. Either phase directory may be absent. Migration files must
   already be compiled `.js`; mongo-updown does no TypeScript execution of user migrations, just a
   plain dynamic `import()`. Each file exports `up(db, client)` / `down(db, client)`.
 - **State tracking**: a dedicated collection (default `mongo_updown_migrations`) is an
-  append-only event log — documents are shaped `{ version, file, direction, date }`
+  append-only event log — documents are shaped `{ version, phase, file, direction, date }`
   (`direction: 'up' | 'down'`) and are never deleted or updated, so the full migration history is
   always recoverable. `recordMigrationUp`/`recordMigrationDown` (`src/db/migration-state-store.ts`)
   each just `insertOne` a new event with their respective direction; there is no delete path.
   `getAppliedMigrations` derives "currently applied" (used to diff against "on disk") via a
   `$sort`/`$group`(`$last`)/`$match` aggregation pipeline run inside MongoDB, rather than fetching
-  the whole (ever-growing) event log into the process — it groups by `{ version, file }`, keeps
+  the whole (ever-growing) event log into the process — it groups by `{ version, phase, file }`, keeps
   only the direction of each group's most recent event, and returns the ones whose latest direction
   is `'up'`. A migration rolled back and never reapplied has a `'down'` event as its latest and is
   therefore excluded.

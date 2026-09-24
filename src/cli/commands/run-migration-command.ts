@@ -10,12 +10,13 @@ import { discoverMigrations } from '#Migrations/discover-migrations'
 import type { LoadedMigration } from '#Migrations/load-migration'
 import { loadMigration } from '#Migrations/load-migration'
 import { computeMigrationPlan } from '#Migrations/migration-plan'
-import type { MigrationDirection, MigrationRef } from '#Migrations/migration-plan'
+import type { MigrationDirection, MigrationPhase, MigrationRef } from '#Migrations/migration-plan'
 
 export interface RunMigrationCommandOptions {
   readonly cwd: string
   readonly targetVersion: string
   readonly targetFile?: string
+  readonly phase: MigrationPhase
 }
 
 export interface MigrationCommandStrategy {
@@ -31,7 +32,7 @@ export async function runMigrationCommand(
   logger: Logger,
   strategy: MigrationCommandStrategy
 ): Promise<void> {
-  const { cwd, targetVersion, targetFile } = options
+  const { cwd, targetVersion, targetFile, phase } = options
   const config = await loadConfig(cwd)
   const mongoUri = await resolveMongoUri(config.mongoUri, cwd)
   const migrationsDir = isAbsolute(config.migrationsDir) ? config.migrationsDir : join(cwd, config.migrationsDir)
@@ -44,6 +45,7 @@ export async function runMigrationCommand(
     ])
     const plan = computeMigrationPlan({
       direction: strategy.direction,
+      phase,
       targetVersion,
       targetFile,
       applied,
@@ -51,18 +53,19 @@ export async function runMigrationCommand(
     })
 
     if (plan.length === 0) {
-      logger.info('Nothing to do.')
+      logger.info(`Nothing to do for phase "${phase}".`)
       return
     }
 
     for (const migrationRef of plan) {
+      const migrationPath = `${migrationRef.version}/${migrationRef.phase}/${migrationRef.file}`
       const discoveredMigration = discovered.find(
-        (m) => m.version === migrationRef.version && m.file === migrationRef.file
+        (m) => m.version === migrationRef.version && m.phase === migrationRef.phase && m.file === migrationRef.file
       )
       if (!discoveredMigration) {
-        throw new Error(`Migration "${migrationRef.file}" for version ${migrationRef.version} was not found on disk.`)
+        throw new Error(`Migration "${migrationPath}" was not found on disk.`)
       }
-      logger.step(`${strategy.stepVerb} ${migrationRef.version}/${migrationRef.file}...`)
+      logger.step(`${strategy.stepVerb} ${migrationPath}...`)
       // Migrations must apply in order, one at a time — these awaits cannot be parallelized.
       /* eslint-disable no-await-in-loop */
       const migration = await loadMigration(discoveredMigration.filePath)

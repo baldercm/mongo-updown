@@ -15,6 +15,7 @@ async function recordMigrationEvent(
 ): Promise<void> {
   await db.collection<MigrationEventDocument>(collectionName).insertOne({
     version: migration.version,
+    phase: migration.phase,
     file: migration.file,
     direction,
     date: new Date()
@@ -34,7 +35,7 @@ export async function getAppliedMigrations(db: Db, collectionName: string): Prom
     .collection<MigrationEventDocument>(collectionName)
     .aggregate<MigrationRef>([
       { $sort: { date: 1, _id: 1 } },
-      { $group: { _id: { version: '$version', file: '$file' }, direction: { $last: '$direction' } } },
+      { $group: { _id: { version: '$version', phase: '$phase', file: '$file' }, direction: { $last: '$direction' } } },
       { $match: { direction: 'up' } },
       { $replaceWith: '$_id' }
     ])

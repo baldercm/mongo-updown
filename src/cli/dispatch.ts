@@ -1,11 +1,24 @@
 import { parseArgs } from 'node:util'
 
+import { isMigrationPhase } from '#Migrations/migration-plan'
+import type { MigrationPhase } from '#Migrations/migration-plan'
+
 export type CliCommand =
   | { readonly kind: 'help' }
   | { readonly kind: 'version' }
   | { readonly kind: 'init'; readonly force: boolean }
-  | { readonly kind: 'up'; readonly targetVersion: string; readonly targetFile?: string }
-  | { readonly kind: 'down'; readonly targetVersion: string; readonly targetFile?: string }
+  | {
+      readonly kind: 'up'
+      readonly targetVersion: string
+      readonly targetFile?: string
+      readonly phase: MigrationPhase
+    }
+  | {
+      readonly kind: 'down'
+      readonly targetVersion: string
+      readonly targetFile?: string
+      readonly phase: MigrationPhase
+    }
 
 export function parseCliArgs(argv: readonly string[]): CliCommand {
   const [command, ...rest] = argv
@@ -24,12 +37,17 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
   }
 
   if (command === 'up' || command === 'down') {
-    const { positionals } = parseArgs({ args: rest, options: {}, allowPositionals: true })
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { phase: { type: 'string' } },
+      allowPositionals: true
+    })
     const [targetVersion, targetFile] = positionals
-    if (!targetVersion) {
-      throw new Error(`Usage: mongo-updown ${command} <version> <file?>`)
+    const { phase } = values
+    if (!targetVersion || !isMigrationPhase(phase)) {
+      throw new Error(`Usage: mongo-updown ${command} <version> <file?> --phase <pre|post>`)
     }
-    return { kind: command, targetVersion, targetFile }
+    return { kind: command, targetVersion, targetFile, phase }
   }
 
   throw new Error(`Unknown command "${command ?? ''}". Expected one of: init, up, down.`)

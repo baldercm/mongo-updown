@@ -10,13 +10,15 @@ import { consoleLogger } from '#Common/logger'
 const HELP_TEXT = `Usage: mongo-updown <command> [options]
 
 Commands:
-  init [--force]           Write mongo-updown.config.js and create the migrations directory
-  up <version> <file?>     Apply pending migrations up to and including <version>
-  down <version> <file?>   Roll back applied migrations from <version> upward
+  init [--force]                              Write mongo-updown.config.js and create the migrations directory
+  up <version> <file?> --phase <pre|post>     Apply pending <phase> migrations up to and including <version>
+  down <version> <file?> --phase <pre|post>   Roll back applied <phase> migrations from <version> upward
+
+  Phases: "pre" runs before deploying the application, "post" runs after it.
 
 Options:
-  -h, --help                Show this help message
-  -v, --version              Show the installed version
+  -h, --help      Show this help message
+  -v, --version   Show the installed version
 `
 
 function readPackageVersion(): string {
@@ -45,12 +47,18 @@ async function main(): Promise<void> {
   }
 
   if (command.kind === 'up') {
-    await runUpCommand({ cwd, targetVersion: command.targetVersion, targetFile: command.targetFile }, consoleLogger)
+    await runUpCommand(
+      { cwd, targetVersion: command.targetVersion, targetFile: command.targetFile, phase: command.phase },
+      consoleLogger
+    )
     return
   }
 
   if (command.kind === 'down') {
-    await runDownCommand({ cwd, targetVersion: command.targetVersion, targetFile: command.targetFile }, consoleLogger)
+    await runDownCommand(
+      { cwd, targetVersion: command.targetVersion, targetFile: command.targetFile, phase: command.phase },
+      consoleLogger
+    )
     return
   }
 }
