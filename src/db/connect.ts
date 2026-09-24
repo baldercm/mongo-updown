@@ -7,7 +7,7 @@ export interface MongoConnection {
 }
 
 export async function connect(mongoUri: string): Promise<MongoConnection> {
-  const client = new MongoClient(mongoUri)
+  const client = new MongoClient(mongoUri, { monitorCommands: true })
   await client.connect()
   return { client, db: client.db() }
 }

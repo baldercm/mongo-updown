@@ -79,6 +79,14 @@ npx mongo-updown down <version> <file?> --phase <pre|post>
   `client.withSession(s => s.withTransaction(...))`: the migration gets `session` in its context and
   `recordMigrationUp`/`recordMigrationDown` insert the state event with that same session, so the
   migration and its record commit or abort together. Non-transactional steps get `session: undefined`.
+- **Parallel-operation guard**: the driver only marks a transaction as started once the server
+  replies to its first command, so concurrent first operations (e.g. `Promise.all`) randomly fail
+  with `ConflictingOperationInProgress`, while later ones happen to work. The driver documents this as
+  unsupported. `connect` therefore enables `monitorCommands`, and each transaction attempt runs under
+  `watchSessionConcurrency` (`src/db/session-concurrency-guard.ts`), which tracks in-flight commands
+  whose `lsid` matches the migration's session. If any two overlap, the step throws a plain error
+  naming the migration, even when the driver would have succeeded. That aborts the transaction, and
+  since the error carries no `TransientTransactionError` label, `withTransaction` doesn't retry it.
 - **Preflight**: before running any step, `runMigrationCommand` loads every planned migration (so an
   import/shape error in any planned file runs nothing) and, if any is transactional, checks
   `supportsTransactions` (`src/db/transaction-support.ts`, a pure function over the server's `hello`

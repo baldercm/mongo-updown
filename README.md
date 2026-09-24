@@ -195,5 +195,9 @@ Transactions are opt-in because they come with MongoDB's restrictions:
   or should be split up.
 - **The function can run more than once.** On a transient error the driver retries the whole
   `up`/`down` function. Don't do side effects outside the database (HTTP calls, files) in it.
-- **No parallel operations.** Don't use `Promise.all` over operations inside the transaction;
-  await them one at a time.
+- **No parallel operations.** MongoDB doesn't support running operations on a transaction's
+  session concurrently: depending on timing it fails with `ConflictingOperationInProgress` or
+  happens to work. mongo-updown makes this deterministic. If two operations on the migration's
+  session are ever in flight at once (`Promise.all`, operations started without `await`, …), it
+  aborts the transaction and fails the migration with an error saying so. Await each operation
+  before starting the next.

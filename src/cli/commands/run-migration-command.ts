@@ -6,6 +6,7 @@ import type { Logger } from '#Common/logger'
 import { loadConfig, resolveMongoUri } from '#Config/load-config'
 import { connect } from '#Db/connect'
 import { getAppliedMigrations } from '#Db/migration-state-store'
+import { watchSessionConcurrency } from '#Db/session-concurrency-guard'
 import { deploymentSupportsTransactions } from '#Db/transaction-support'
 import { discoverMigrations } from '#Migrations/discover-migrations'
 import type { LoadedMigration, MigrationContext } from '#Migrations/load-migration'
@@ -46,10 +47,28 @@ async function runStep(
     await strategy.updateState(db, stateCollection, step.ref)
     return
   }
+  const parallelError = (cause?: unknown): Error =>
+    new Error(
+      `Migration "${step.path}" ran database operations in parallel inside its transaction, which MongoDB ` +
+        'does not support. Await each operation before starting the next.',
+      { cause }
+    )
   // The migration's writes and its state event commit or abort together.
   await client.withSession((session) =>
     session.withTransaction(async () => {
-      await strategy.applyMigration(step.migration, { db, client, session })
+      const guard = watchSessionConcurrency(client, session)
+      try {
+        await strategy.applyMigration(step.migration, { db, client, session })
+      } catch (error) {
+        // Replaces e.g. ConflictingOperationInProgress; the plain error also stops withTransaction from retrying.
+        throw guard.overlapped ? parallelError(error) : error
+      } finally {
+        guard.dispose()
+      }
+      // Rejected even when the overlapping operations happened to succeed: throwing aborts the transaction.
+      if (guard.overlapped) {
+        throw parallelError()
+      }
       await strategy.updateState(db, stateCollection, step.ref, session)
     })
   )

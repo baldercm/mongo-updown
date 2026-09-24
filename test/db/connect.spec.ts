@@ -14,6 +14,15 @@ describe('connect', () => {
     }
   })
 
+  it('enables command monitoring, which the transaction concurrency guard relies on', async () => {
+    const { client } = await connect('mongodb://localhost:27017/mongo_updown_test')
+    try {
+      assert.equal(client.options.monitorCommands, true)
+    } finally {
+      await client.close()
+    }
+  })
+
   it('rejects when the server is unreachable', async () => {
     await assert.rejects(connect('mongodb://127.0.0.1:1/mongo_updown_test?serverSelectionTimeoutMS=200'))
   })

@@ -403,3 +403,67 @@ describe('runUpCommand when a later planned migration fails to load', () => {
     assert.deepEqual(await getAppliedMigrations(db, stateCollection), [])
   })
 })
+
+describe('runUpCommand with a transactional migration that runs operations in parallel', () => {
+  let dir = ''
+  let client: MongoClient
+  let db: Db
+  const stateCollection = `mongo_updown_state_test_${randomUUID()}`
+  const sideEffectsCollection = `mongo_updown_side_effects_test_${randomUUID()}`
+
+  function parallelMigrationSource(marker: string, awaitFirst: boolean): string {
+    const first = awaitFirst ? `await coll.insertOne({ marker: '${marker}' }, { session })\n  ` : ''
+    return `exports.transaction = true
+exports.up = async ({ db, session }) => {
+  const coll = db.collection('${sideEffectsCollection}')
+  ${first}await Promise.all([0, 1, 2].map((i) => coll.insertOne({ marker: '${marker}', i }, { session })))
+}
+exports.down = async () => {}
+`
+  }
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'mongo-updown-parallel-'))
+    process.env.MONGO_UPDOWN_TEST_URI = 'mongodb://localhost:27017/mongo_updown_test'
+    await writeFile(
+      join(dir, 'mongo-updown.config.js'),
+      `module.exports = {
+        mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
+        migrationsDir: './migrations',
+        stateCollection: '${stateCollection}',
+      }\n`
+    )
+    await mkdir(join(dir, 'migrations', '1.0.0', 'pre'), { recursive: true })
+    await writeFile(
+      join(dir, 'migrations', '1.0.0', 'pre', 'parallel-first.js'),
+      parallelMigrationSource('parallel-first', false)
+    )
+    await writeFile(
+      join(dir, 'migrations', '1.0.0', 'pre', 'parallel-later.js'),
+      parallelMigrationSource('parallel-later', true)
+    )
+    ;({ client, db } = await connect('mongodb://localhost:27017/mongo_updown_test'))
+    await db.createCollection(sideEffectsCollection)
+  })
+
+  after(async () => {
+    await db.collection(sideEffectsCollection).drop()
+    await client.close()
+    delete process.env.MONGO_UPDOWN_TEST_URI
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  for (const file of ['parallel-first.js', 'parallel-later.js']) {
+    it(`always rejects ${file}, writing nothing, however the operations happen to interleave`, async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        // eslint-disable-next-line no-await-in-loop
+        await assert.rejects(
+          runUpCommand({ cwd: dir, targetVersion: '1.0.0', targetFile: file, phase: 'pre' }, createSilentLogger()),
+          new RegExp(`1\\.0\\.0/pre/${file.replace('.', '\\.')}.*ran database operations in parallel`, 'i')
+        )
+      }
+      assert.equal(await db.collection(sideEffectsCollection).countDocuments({ marker: file.replace('.js', '') }), 0)
+      assert.equal(await db.collection(stateCollection).countDocuments({ file }), 0)
+    })
+  }
+})
