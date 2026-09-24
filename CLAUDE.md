@@ -52,7 +52,8 @@ npx mongo-updown down <version> <file?> --phase <pre|post>
   rejects (throws on) any `.js` file placed directly in a version directory and any subdirectory other
   than `pre`/`post`; non-`.js` files are ignored. Either phase directory may be absent. Migration files must
   already be compiled `.js`; mongo-updown does no TypeScript execution of user migrations, just a
-  plain dynamic `import()`. Each file exports `up(db, client)` / `down(db, client)`.
+  plain dynamic `import()`. Each file exports `up(ctx)` / `down(ctx)`, taking a single
+  `MigrationContext` `{ db, client, session }`, and may export `transaction = true` (any non-boolean value is a load error).
 - **State tracking**: a dedicated collection (default `mongo_updown_migrations`) is an
   append-only event log — documents are shaped `{ version, phase, file, direction, date }`
   (`direction: 'up' | 'down'`) and are never deleted or updated, so the full migration history is
@@ -66,11 +67,23 @@ npx mongo-updown down <version> <file?> --phase <pre|post>
   therefore excluded.
 - **Failure behavior**: `runMigrationCommand` (`src/cli/commands/run-migration-command.ts`) runs a
   plan sequentially and stops at the first throw, leaving earlier steps in that run applied/rolled
-  back as they completed. Recording state is a separate write after the migration function
-  returns — not wrapped in a transaction — so a crash or state-store failure in that window can
+  back as they completed. For a non-transactional migration, recording state is a separate write
+  after the migration function returns, so a crash or state-store failure in that window can
   leave a migration applied-but-unrecorded (or the reverse on rollback), and the next run will
   attempt it again. This is an accepted trade-off, not a bug: user migrations are expected to be
   safe to run twice.
+- **Transactions are opt-in per migration** (`export const transaction = true`), never global,
+  because MongoDB transactions need a replica set/sharded cluster and forbid most DDL (index
+  creation on existing collections, drops, renames, `collMod`) and anything past the 60s
+  `transactionLifetimeLimitSeconds`. A transactional step runs inside
+  `client.withSession(s => s.withTransaction(...))`: the migration gets `session` in its context and
+  `recordMigrationUp`/`recordMigrationDown` insert the state event with that same session, so the
+  migration and its record commit or abort together. Non-transactional steps get `session: undefined`.
+- **Preflight**: before running any step, `runMigrationCommand` loads every planned migration (so an
+  import/shape error in any planned file runs nothing) and, if any is transactional, checks
+  `supportsTransactions` (`src/db/transaction-support.ts`, a pure function over the server's `hello`
+  response: true when `setName` is set or `msg === 'isdbgrid'`), throwing a message that lists the
+  transactional migrations when the server is standalone.
 - **Config file** (`mongo-updown.config.js`, written by `init`, refuses to overwrite an existing
   one unless `--force`) never contains a raw connection string — `mongoUri` is
   `{ fromEnv: string } | { fromFile: string }`, resolved to the actual URI only right before
@@ -118,7 +131,7 @@ every push to `main` and every pull request, pinned to the same Node (`24.21.0`)
   - `no-console`, `typescript/no-explicit-any`, `typescript/no-floating-promises`, `typescript/no-misused-promises`, and `typescript/explicit-module-boundary-types` are errors.
   - `test/**` and `test/setup.ts`/`test/teardown.ts` have relaxed overrides (e.g. `no-restricted-imports` off for setup/teardown).
 - Format: `oxfmt` (`.oxfmtrc.json`) — no semicolons, single quotes, 2-space indent, 120 print width, no trailing commas, and import sorting grouped as: builtins → externals → `#`-prefixed path-alias imports → relative imports → unknown.
-- Test runner: native **`node:test`** (not Jest, despite what the scaffolding originally anticipated) — `describe`/`it`/`before`/`after` from `node:test`, assertions from `node:assert/strict`, no globals. Run as `node --conditions=development --test "test/**/*.spec.ts"`; `--conditions=development` is what makes the `#X/*` aliases resolve to `src/*.ts` (see below) instead of `dist/*.js`. Integration tests (`db/*`, migration loading) run against a real local MongoDB via `docker-compose.yml`, started/stopped by `test/setup.ts`/`test/teardown.ts` through npm's `pretest`/`posttest` lifecycle scripts (`node:test` has no Jest-style `globalSetup`/`globalTeardown`).
+- Test runner: native **`node:test`** (not Jest, despite what the scaffolding originally anticipated) — `describe`/`it`/`before`/`after` from `node:test`, assertions from `node:assert/strict`, no globals. Run as `node --conditions=development --test "test/**/*.spec.ts"`; `--conditions=development` is what makes the `#X/*` aliases resolve to `src/*.ts` (see below) instead of `dist/*.js`. Integration tests (`db/*`, migration loading) run against a real local MongoDB via `docker-compose.yml` — a single-node replica set (`rs0`, member host `localhost:27017`) so transactions work, started/stopped by `test/setup.ts`/`test/teardown.ts` through npm's `pretest`/`posttest` lifecycle scripts (`node:test` has no Jest-style `globalSetup`/`globalTeardown`).
 
 ### Path aliases
 

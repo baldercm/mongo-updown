@@ -1,4 +1,4 @@
-import type { Db } from 'mongodb'
+import type { ClientSession, Db } from 'mongodb'
 
 import type { MigrationDirection, MigrationRef } from '#Migrations/migration-plan'
 
@@ -11,23 +11,37 @@ async function recordMigrationEvent(
   db: Db,
   collectionName: string,
   migration: MigrationRef,
-  direction: MigrationDirection
+  direction: MigrationDirection,
+  session: ClientSession | undefined
 ): Promise<void> {
-  await db.collection<MigrationEventDocument>(collectionName).insertOne({
-    version: migration.version,
-    phase: migration.phase,
-    file: migration.file,
-    direction,
-    date: new Date()
-  })
+  await db.collection<MigrationEventDocument>(collectionName).insertOne(
+    {
+      version: migration.version,
+      phase: migration.phase,
+      file: migration.file,
+      direction,
+      date: new Date()
+    },
+    { session }
+  )
 }
 
-export async function recordMigrationUp(db: Db, collectionName: string, migration: MigrationRef): Promise<void> {
-  await recordMigrationEvent(db, collectionName, migration, 'up')
+export async function recordMigrationUp(
+  db: Db,
+  collectionName: string,
+  migration: MigrationRef,
+  session?: ClientSession
+): Promise<void> {
+  await recordMigrationEvent(db, collectionName, migration, 'up', session)
 }
 
-export async function recordMigrationDown(db: Db, collectionName: string, migration: MigrationRef): Promise<void> {
-  await recordMigrationEvent(db, collectionName, migration, 'down')
+export async function recordMigrationDown(
+  db: Db,
+  collectionName: string,
+  migration: MigrationRef,
+  session?: ClientSession
+): Promise<void> {
+  await recordMigrationEvent(db, collectionName, migration, 'down', session)
 }
 
 export async function getAppliedMigrations(db: Db, collectionName: string): Promise<MigrationRef[]> {

@@ -96,4 +96,33 @@ describe('migration-state-store', () => {
       [{ version: '3.0.0', phase: 'pre', file: 'cleanup.js' }]
     )
   })
+
+  it('records nothing when the event is inserted within a transaction that aborts', async () => {
+    const session = client.startSession()
+    try {
+      session.startTransaction()
+      await recordMigrationUp(db, collectionName, { version: '4.0.0', phase: 'pre', file: 'aborted.js' }, session)
+      await session.abortTransaction()
+    } finally {
+      await session.endSession()
+    }
+    assert.equal(await db.collection(collectionName).countDocuments({ version: '4.0.0' }), 0)
+  })
+
+  it('records the event when it is inserted within a transaction that commits', async () => {
+    const session = client.startSession()
+    try {
+      session.startTransaction()
+      await recordMigrationUp(db, collectionName, { version: '4.1.0', phase: 'pre', file: 'committed.js' }, session)
+      await recordMigrationDown(db, collectionName, { version: '4.1.0', phase: 'pre', file: 'committed.js' }, session)
+      await session.commitTransaction()
+    } finally {
+      await session.endSession()
+    }
+    const history = await db.collection(collectionName).find({ version: '4.1.0' }).toArray()
+    assert.deepEqual(
+      history.map((doc) => doc.direction),
+      ['up', 'down']
+    )
+  })
 })

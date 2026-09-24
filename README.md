@@ -93,17 +93,23 @@ migrations/
 Every migration must live in a phase subdirectory: a `.js` file placed directly in a version
 directory, or any subdirectory other than `pre/`/`post/`, is rejected with an error.
 
-Each migration file exports `up` and `down`:
+Each migration file exports `up` and `down`. Both receive a single context object,
+`{ db, client, session }`:
 
 ```js
-exports.up = async (db, client) => {
+exports.up = async ({ db }) => {
   await db.createCollection('users')
 }
 
-exports.down = async (db, client) => {
+exports.down = async ({ db }) => {
   await db.collection('users').drop()
 }
 ```
+
+- `db` is the database named in the connection string.
+- `client` is the connected `MongoClient`, for when you need another database.
+- `session` is the `ClientSession` of the migration's transaction when it
+  [opts into one](#transactions), and `undefined` otherwise.
 
 Migration files must be plain, already-compiled `.js` — mongo-updown does not transpile
 TypeScript at runtime. If you write migrations in TypeScript, compile them before running `up`/
@@ -145,9 +151,49 @@ Migrations in a plan run one at a time, in order. If one throws, the run stops i
 migrations already applied (or rolled back) earlier in that same run stay that way; nothing after
 the failure is attempted.
 
-Recording that a migration ran is a separate write that happens right after its `up`/`down`
-function returns. mongo-updown does not wrap the two in a transaction, so a process crash or a
-failed state-store write in that narrow window can leave a migration applied but not recorded (or
-vice versa on rollback). The next run would then try to (re)apply it. Write migrations to be safe
-to run twice — e.g. use `createIndex`/upsert-style operations instead of ones that fail on a
+For a migration that isn't [transactional](#transactions), recording that it ran is a separate
+write that happens right after its `up`/`down` function returns. A process crash or a failed
+state-store write in that narrow window can leave the migration applied but not recorded (or the
+reverse on rollback), and the next run would then try to apply it again. Write migrations to be
+safe to run twice — e.g. use `createIndex`/upsert-style operations instead of ones that fail on a
 second run — so a retry after a partial failure is harmless.
+
+A transactional migration doesn't have this window: its writes and its state record commit
+together or not at all. If it throws, none of its writes are kept and it stays pending.
+
+## Transactions
+
+A migration can opt into running inside a MongoDB transaction by exporting `transaction = true`.
+Its `up`/`down` writes and the record that it ran are then committed atomically:
+
+```js
+exports.transaction = true
+
+exports.up = async ({ db, session }) => {
+  await db.collection('users').updateMany({ role: { $exists: false } }, { $set: { role: 'member' } }, { session })
+}
+
+exports.down = async ({ db, session }) => {
+  await db.collection('users').updateMany({ role: 'member' }, { $unset: { role: '' } }, { session })
+}
+```
+
+With ES modules, use `export const transaction = true`.
+
+Transactions are opt-in because they come with MongoDB's restrictions:
+
+- **Replica set or sharded cluster required.** Standalone servers don't support transactions.
+  mongo-updown checks this before running anything and fails, listing the transactional migrations
+  in the plan, when the server can't run them.
+- **Pass `{ session }` to every operation.** An operation without it runs outside the
+  transaction, isn't rolled back on failure, and no error is raised.
+- **Most schema changes aren't allowed.** Creating an index on an existing collection, dropping
+  an index or collection, renaming a collection, and `collMod` can't run in a transaction. Keep
+  those in non-transactional migrations.
+- **Time limit.** By default the server aborts a transaction after 60 seconds
+  (`transactionLifetimeLimitSeconds`). Large backfills belong in non-transactional migrations,
+  or should be split up.
+- **The function can run more than once.** On a transient error the driver retries the whole
+  `up`/`down` function. Don't do side effects outside the database (HTTP calls, files) in it.
+- **No parallel operations.** Don't use `Promise.all` over operations inside the transaction;
+  await them one at a time.

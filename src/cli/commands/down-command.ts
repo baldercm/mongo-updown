@@ -10,7 +10,7 @@ export async function runDownCommand(options: RunDownCommandOptions, logger: Log
     direction: 'down',
     stepVerb: 'Rolling back',
     doneVerb: 'Rolled back',
-    applyMigration: (migration, db, client) => migration.down(db, client),
+    applyMigration: (migration, context) => migration.down(context),
     updateState: recordMigrationDown
   })
 }

@@ -10,7 +10,7 @@ export async function runUpCommand(options: RunUpCommandOptions, logger: Logger)
     direction: 'up',
     stepVerb: 'Applying',
     doneVerb: 'Applied',
-    applyMigration: (migration, db, client) => migration.up(db, client),
+    applyMigration: (migration, context) => migration.up(context),
     updateState: recordMigrationUp
   })
 }

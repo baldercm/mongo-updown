@@ -26,8 +26,8 @@ function createRecordingLogger(): Logger & { readonly messages: string[] } {
 }
 
 function markerMigrationSource(collectionName: string, marker: string): string {
-  return `exports.up = async (db) => { await db.collection('${collectionName}').insertOne({ marker: '${marker}' }) }
-exports.down = async (db) => { await db.collection('${collectionName}').deleteMany({ marker: '${marker}' }) }
+  return `exports.up = async ({ db }) => { await db.collection('${collectionName}').insertOne({ marker: '${marker}' }) }
+exports.down = async ({ db }) => { await db.collection('${collectionName}').deleteMany({ marker: '${marker}' }) }
 `
 }
 
@@ -216,11 +216,11 @@ describe('runDownCommand after an up run that failed partway through a version',
     await writeFile(join(dir, 'migrations', '1.2.0', 'pre', 'b.js'), markerMigrationSource(sideEffectsCollection, 'b'))
     await writeFile(
       join(dir, 'migrations', '1.2.0', 'pre', 'c.js'),
-      `exports.up = async (db) => {
+      `exports.up = async ({ db }) => {
   await db.collection('${sideEffectsCollection}').insertOne({ marker: 'c' })
   throw new Error('c failed halfway')
 }
-exports.down = async (db) => { await db.collection('${sideEffectsCollection}').deleteMany({ marker: 'c' }) }
+exports.down = async ({ db }) => { await db.collection('${sideEffectsCollection}').deleteMany({ marker: 'c' }) }
 `
     )
     ;({ client, db } = await connect('mongodb://localhost:27017/mongo_updown_test'))
@@ -263,6 +263,143 @@ exports.down = async (db) => { await db.collection('${sideEffectsCollection}').d
     assert.equal(await markers('b'), 0)
     // The failed migration's partial side effect is left in place: it was never recorded, so its down is not run.
     assert.equal(await markers('c'), 1)
+    assert.deepEqual(await getAppliedMigrations(db, stateCollection), [])
+  })
+})
+
+describe('runUpCommand / runDownCommand with transactional migrations', () => {
+  let dir = ''
+  let client: MongoClient
+  let db: Db
+  const stateCollection = `mongo_updown_state_test_${randomUUID()}`
+  const sideEffectsCollection = `mongo_updown_side_effects_test_${randomUUID()}`
+
+  async function markers(marker: string): Promise<number> {
+    return db.collection(sideEffectsCollection).countDocuments({ marker })
+  }
+
+  async function events(file: string): Promise<string[]> {
+    const docs = await db.collection(stateCollection).find({ file }).sort({ date: 1 }).toArray()
+    return docs.map((doc) => String(doc.direction))
+  }
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'mongo-updown-transactions-'))
+    process.env.MONGO_UPDOWN_TEST_URI = 'mongodb://localhost:27017/mongo_updown_test'
+    await writeFile(
+      join(dir, 'mongo-updown.config.js'),
+      `module.exports = {
+        mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
+        migrationsDir: './migrations',
+        stateCollection: '${stateCollection}',
+      }\n`
+    )
+    await mkdir(join(dir, 'migrations', '1.0.0', 'pre'), { recursive: true })
+    await mkdir(join(dir, 'migrations', '2.0.0', 'pre'), { recursive: true })
+    await writeFile(
+      join(dir, 'migrations', '1.0.0', 'pre', 'a-plain.js'),
+      `exports.up = async ({ db, session }) => {
+  await db.collection('${sideEffectsCollection}').insertOne({ marker: 'plain', hasSession: session !== undefined })
+}
+exports.down = async ({ db }) => { await db.collection('${sideEffectsCollection}').deleteMany({ marker: 'plain' }) }
+`
+    )
+    await writeFile(
+      join(dir, 'migrations', '1.0.0', 'pre', 'b-tx.js'),
+      `exports.transaction = true
+exports.up = async ({ db, session }) => {
+  await db.collection('${sideEffectsCollection}').insertOne({ marker: 'tx', hasSession: session !== undefined }, { session })
+}
+exports.down = async ({ db, session }) => {
+  await db.collection('${sideEffectsCollection}').deleteMany({ marker: 'tx' }, { session })
+}
+`
+    )
+    await writeFile(
+      join(dir, 'migrations', '2.0.0', 'pre', 'fail-tx.js'),
+      `exports.transaction = true
+exports.up = async ({ db, session }) => {
+  await db.collection('${sideEffectsCollection}').insertOne({ marker: 'fail-tx' }, { session })
+  throw new Error('fail-tx failed halfway')
+}
+exports.down = async () => {}
+`
+    )
+    ;({ client, db } = await connect('mongodb://localhost:27017/mongo_updown_test'))
+  })
+
+  after(async () => {
+    await db.collection(stateCollection).drop()
+    await db.collection(sideEffectsCollection).drop()
+    await client.close()
+    delete process.env.MONGO_UPDOWN_TEST_URI
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('passes a session only to transactional migrations, recording both', async () => {
+    await runUpCommand({ cwd: dir, targetVersion: '1.0.0', phase: 'pre' }, createSilentLogger())
+    const plain = await db.collection(sideEffectsCollection).findOne({ marker: 'plain' })
+    const tx = await db.collection(sideEffectsCollection).findOne({ marker: 'tx' })
+    assert.equal(plain?.hasSession, false)
+    assert.equal(tx?.hasSession, true)
+    assert.deepEqual(await events('a-plain.js'), ['up'])
+    assert.deepEqual(await events('b-tx.js'), ['up'])
+  })
+
+  it('discards both the writes and the state record of a transactional migration that throws', async () => {
+    await assert.rejects(
+      runUpCommand({ cwd: dir, targetVersion: '2.0.0', phase: 'pre' }, createSilentLogger()),
+      /fail-tx failed halfway/
+    )
+    assert.equal(await markers('fail-tx'), 0)
+    assert.deepEqual(await events('fail-tx.js'), [])
+  })
+
+  it('rolls back a transactional migration within a transaction, recording the down event', async () => {
+    await runDownCommand({ cwd: dir, targetVersion: '1.0.0', phase: 'pre' }, createSilentLogger())
+    assert.equal(await markers('tx'), 0)
+    assert.equal(await markers('plain'), 0)
+    assert.deepEqual(await events('b-tx.js'), ['up', 'down'])
+    assert.deepEqual(await getAppliedMigrations(db, stateCollection), [])
+  })
+})
+
+describe('runUpCommand when a later planned migration fails to load', () => {
+  let dir = ''
+  let client: MongoClient
+  let db: Db
+  const stateCollection = `mongo_updown_state_test_${randomUUID()}`
+  const sideEffectsCollection = `mongo_updown_side_effects_test_${randomUUID()}`
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'mongo-updown-load-failure-'))
+    process.env.MONGO_UPDOWN_TEST_URI = 'mongodb://localhost:27017/mongo_updown_test'
+    await writeFile(
+      join(dir, 'mongo-updown.config.js'),
+      `module.exports = {
+        mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
+        migrationsDir: './migrations',
+        stateCollection: '${stateCollection}',
+      }\n`
+    )
+    await mkdir(join(dir, 'migrations', '1.0.0', 'pre'), { recursive: true })
+    await writeFile(join(dir, 'migrations', '1.0.0', 'pre', 'a.js'), markerMigrationSource(sideEffectsCollection, 'a'))
+    await writeFile(join(dir, 'migrations', '1.0.0', 'pre', 'b.js'), 'exports.up = async () => {}\n')
+    ;({ client, db } = await connect('mongodb://localhost:27017/mongo_updown_test'))
+  })
+
+  after(async () => {
+    await client.close()
+    delete process.env.MONGO_UPDOWN_TEST_URI
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('runs nothing, not even the migrations before the broken file', async () => {
+    await assert.rejects(
+      runUpCommand({ cwd: dir, targetVersion: '1.0.0', phase: 'pre' }, createSilentLogger()),
+      /b\.js.*must export up\(context\) and down\(context\)/i
+    )
+    assert.equal(await db.collection(sideEffectsCollection).countDocuments({ marker: 'a' }), 0)
     assert.deepEqual(await getAppliedMigrations(db, stateCollection), [])
   })
 })

@@ -1,10 +1,20 @@
 services:
   mongo:
     image: mongo:8
+    # Single-node replica set: transactions (used by `transaction = true` migrations) aren't supported on standalone.
+    command: ['--replSet', 'rs0']
     ports:
       - '27017:27017'
     healthcheck:
-      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+      # Initiates the replica set on first run, then stays unhealthy until this node is writable primary.
+      test:
+        [
+          'CMD',
+          'mongosh',
+          '--quiet',
+          '--eval',
+          "try { rs.status() } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }) }; if (!db.hello().isWritablePrimary) { quit(1) }"
+        ]
       interval: 1s
       timeout: 5s
       retries: 30
