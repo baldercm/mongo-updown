@@ -188,3 +188,81 @@ exports.down = async () => {}
     )
   })
 })
+
+describe('runDownCommand after an up run that failed partway through a version', () => {
+  let dir = ''
+  let client: MongoClient
+  let db: Db
+  const stateCollection = `mongo_updown_state_test_${randomUUID()}`
+  const sideEffectsCollection = `mongo_updown_side_effects_test_${randomUUID()}`
+
+  async function markers(marker: string): Promise<number> {
+    return db.collection(sideEffectsCollection).countDocuments({ marker })
+  }
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'mongo-updown-partial-failure-'))
+    process.env.MONGO_UPDOWN_TEST_URI = 'mongodb://localhost:27017/mongo_updown_test'
+    await writeFile(
+      join(dir, 'mongo-updown.config.js'),
+      `module.exports = {
+        mongoUri: { fromEnv: 'MONGO_UPDOWN_TEST_URI' },
+        migrationsDir: './migrations',
+        stateCollection: '${stateCollection}',
+      }\n`
+    )
+    await mkdir(join(dir, 'migrations', '1.2.0', 'pre'), { recursive: true })
+    await writeFile(join(dir, 'migrations', '1.2.0', 'pre', 'a.js'), markerMigrationSource(sideEffectsCollection, 'a'))
+    await writeFile(join(dir, 'migrations', '1.2.0', 'pre', 'b.js'), markerMigrationSource(sideEffectsCollection, 'b'))
+    await writeFile(
+      join(dir, 'migrations', '1.2.0', 'pre', 'c.js'),
+      `exports.up = async (db) => {
+  await db.collection('${sideEffectsCollection}').insertOne({ marker: 'c' })
+  throw new Error('c failed halfway')
+}
+exports.down = async (db) => { await db.collection('${sideEffectsCollection}').deleteMany({ marker: 'c' }) }
+`
+    )
+    ;({ client, db } = await connect('mongodb://localhost:27017/mongo_updown_test'))
+  })
+
+  after(async () => {
+    await db.collection(stateCollection).drop()
+    await db.collection(sideEffectsCollection).drop()
+    await client.close()
+    delete process.env.MONGO_UPDOWN_TEST_URI
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('stops at the failing migration, keeping the earlier ones applied and recorded', async () => {
+    await assert.rejects(
+      runUpCommand({ cwd: dir, targetVersion: '1.2.0', phase: 'pre' }, createSilentLogger()),
+      /c failed halfway/
+    )
+    assert.equal(await markers('a'), 1)
+    assert.equal(await markers('b'), 1)
+    const applied = await getAppliedMigrations(db, stateCollection)
+    assert.deepEqual(
+      applied.sort((x, y) => x.file.localeCompare(y.file)),
+      [
+        { version: '1.2.0', phase: 'pre', file: 'a.js' },
+        { version: '1.2.0', phase: 'pre', file: 'b.js' }
+      ]
+    )
+  })
+
+  it('rolls back only the recorded migrations in reverse order, never calling down on the failed one', async () => {
+    const logger = createRecordingLogger()
+    await runDownCommand({ cwd: dir, targetVersion: '1.2.0', phase: 'pre' }, logger)
+    assert.deepEqual(logger.messages, [
+      'Rolling back 1.2.0/pre/b.js...',
+      'Rolling back 1.2.0/pre/a.js...',
+      'Rolled back 2 migration(s).'
+    ])
+    assert.equal(await markers('a'), 0)
+    assert.equal(await markers('b'), 0)
+    // The failed migration's partial side effect is left in place: it was never recorded, so its down is not run.
+    assert.equal(await markers('c'), 1)
+    assert.deepEqual(await getAppliedMigrations(db, stateCollection), [])
+  })
+})
