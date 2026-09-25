@@ -5,17 +5,20 @@ import { Chalk } from 'chalk'
 
 import { consoleLogger, createConsoleLogger } from '#Common/logger'
 
+// eslint-disable-next-line no-control-regex -- intentionally matching the ANSI escape byte to strip color codes
+const stripAnsi = (value: string): string => value.replace(/\x1B\[\d+m/g, '')
+
 describe('consoleLogger', () => {
   it('writes info messages to stdout with a trailing newline', (t) => {
     const write = t.mock.method(process.stdout, 'write', () => true)
     consoleLogger.info('hello')
-    assert.match(String(write.mock.calls[0]?.arguments[0]), /· hello\n$/)
+    assert.match(stripAnsi(String(write.mock.calls[0]?.arguments[0])), /· hello\n$/)
   })
 
   it('writes error messages to stderr with a trailing newline', (t) => {
     const write = t.mock.method(process.stderr, 'write', () => true)
     consoleLogger.error('oops')
-    assert.match(String(write.mock.calls[0]?.arguments[0]), /✖ oops\n$/)
+    assert.match(stripAnsi(String(write.mock.calls[0]?.arguments[0])), /✖ oops\n$/)
   })
 })
 
