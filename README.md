@@ -1,8 +1,19 @@
-mongo-updown is an opinionated MongoDB migration tool featuring:
+mongo-updown is an opinionated MongoDB migration tool for TypeScript projects. It runs your
+up/down migration scripts in order, up to or back from any semantic version, and adds the safety
+nets a production migration tool needs:
 
-- up/down scripts
-- version aware
-- written in TypeScript
+- **Up/down scripts** — every migration pairs a forward change with its rollback.
+- **Version aware** — target any semver version; every pending (or applied) migration up to it
+  runs in order, in one command.
+- **Deployment phases** — optionally split migrations into `pre`/`post` steps, so additive
+  changes always land before deploy and destructive cleanup always waits until after (see
+  [Deployment phases](#deployment-phases)).
+- **Opt-in transactions** — a migration's writes and the record that it ran can commit or abort
+  together atomically (see [Transactions](#transactions)).
+- **Append-only audit trail** — every migration run is logged and never deleted or rewritten, so
+  the full history is always recoverable.
+- **No secrets in the config** — the connection string lives in an env var or a gitignored file,
+  never in the (commit-safe) config itself.
 
 ## Requirements
 
