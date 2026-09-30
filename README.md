@@ -1,4 +1,4 @@
-mongo-updown is an opinionated MongoDB migration tool for TypeScript projects. It runs your
+mongo-updown is an opinionated MongoDB migration tool for Node.js. It runs your
 up/down migration scripts in order, up to or back from any semantic version, and adds the safety
 nets a production migration tool needs:
 
