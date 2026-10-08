@@ -184,7 +184,9 @@ Hard rules — follow these exactly, no exceptions:
 - **Ask when uncertain** — if there's any doubt about intent, or multiple valid approaches exist, ask
   before proceeding; never guess at architectural decisions, design choices, or user preferences.
   Always ask through the interactive questions interface (the AskUserQuestion tool) instead of
-  plain text, so the user can pick from options.
+  plain text, so the user can pick from options. Exception: commit-message approval (next rule).
 - **Review commit messages** — always show the generated commit message and get explicit approval
-  before running `git commit`. Never commit without that review. Print the message as final chat
-  text (not inside AskUserQuestion), then ask for approval through AskUserQuestion.
+  before running `git commit`. Never commit without that review. End the turn with the message in a
+  code block, followed by short reply options (e.g. "commit" / "split" / edits), and let the user
+  approve in chat. Don't call AskUserQuestion in that turn: in the VS Code extension, text written
+  before a question prompt isn't shown, so the message would be hidden.
