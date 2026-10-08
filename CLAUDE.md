@@ -7,21 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Architecture is designed (see below) and implementation is underway. `src/` and `test/` are being
 built out to match the module boundaries and decisions documented here.
 
-## Intended purpose (from README.md)
+## Purpose
 
-mongo-updown is an opinionated MongoDB migration tool, written in TypeScript, featuring:
-
-- up/down migration scripts
-- version-aware migrations
-
-CLI usage:
-
-```shell
-npm i -D mongo-updown mongodb
-npx mongo-updown init [--phases <true|false>]
-npx mongo-updown up <version> <file?> [--phase <pre|post>]
-npx mongo-updown down <version> <file?> [--phase <pre|post>]
-```
+mongo-updown is an opinionated MongoDB migration tool, written in TypeScript: up/down migration
+scripts, version-aware. See README.md for the CLI usage and user-facing behavior.
 
 ## Architecture
 
@@ -32,66 +21,63 @@ npx mongo-updown down <version> <file?> [--phase <pre|post>]
   Whether `--phase` is required depends on the project's config: `phases: true` requires it (missing
   or any value other than `pre`/`post` throws a usage error) so a deploy pipeline can never run the
   wrong phase by accident, while `phases: false` forbids it (given anyway throws a usage error) since
-  there's no phase to select. Since `parseCliArgs` (`src/cli/dispatch.ts`) runs before the config file
-  is loaded, it only enforces the value-shape check (`pre`/`post` when given); the phases-vs-`--phase`
-  requiredness check itself lives in `runMigrationCommand` (`src/cli/commands/run-migration-command.ts`),
-  right after `loadConfig`, before any network connection. Each run executes exactly one phase (or,
-  in phaseless mode, the entire flat set).
+  there's no phase to select. `parseCliArgs` runs before the config file is loaded, so it only checks
+  the value shape; the phases-vs-`--phase` requiredness check lives in `runMigrationCommand`, right
+  after `loadConfig`, before any network connection. Each run executes exactly one phase (or, in
+  phaseless mode, the entire flat set).
 - **Deployment phases** (only meaningful when the config has `phases: true`): `pre` migrations run
   before the new app version is deployed (additive, backward-compatible changes), `post` migrations
   run after it (destructive/cleanup changes). The phase is part of a migration's identity —
   `MigrationRef` is `{ version, phase?, file }`, so `1.2.0/pre/x.js` and `1.2.0/post/x.js` are distinct
   migrations. With `phases: false`, `MigrationRef.phase` is omitted entirely (never `null`, never a
   sentinel) — identity is just `{ version, file }`.
-- **Phase ordering guard**: `computeMigrationPlan` (`src/migrations/migration-plan.ts`) throws, listing
-  the blocking migrations, when `up X --phase post` is requested while any `pre` migration ≤ X is still
-  pending, or when `down X --phase pre` is requested while any `post` migration ≥ X is still applied.
-  The guard applies even when `<file?>` is given, and since the plan is computed before anything runs,
-  a guard failure runs nothing. The guard is a no-op (returns immediately) when `options.phase` is
-  `undefined` — there's no ordering concept without phases.
-- **`--help`/`-h`** prints usage and exits 0; **`--version`/`-v`** prints the installed package
-  version (read from `package.json` at runtime, resolved relative to `bin.ts`/`bin.js` so it works
-  in both dev and the compiled `dist/` output) and exits 0. Recognized only as the first argument.
-  Running with **no command at all** (`npx mongo-updown` alone) is treated the same as `--help`,
-  printing usage and exiting 0, instead of throwing an "unknown command" error — an unrecognized
-  command name (e.g. `npx mongo-updown frobnicate`) still throws.
-- **Versions are semver strings** (`major.minor.patch`), compared with semver rules.
-- **Migration layout** depends on the config's `phases` field, passed into `discoverMigrations`
-  (`src/migrations/discover-migrations.ts`) as `{ phases: boolean }`:
+- **Phase ordering guard**: `computeMigrationPlan` throws, listing the blocking migrations, when
+  `up X --phase post` is requested while any `pre` migration ≤ X is still pending, or when
+  `down X --phase pre` is requested while any `post` migration ≥ X is still applied. The guard applies
+  even when `<file?>` is given, and since the plan is computed before anything runs, a guard failure
+  runs nothing. It is a no-op when `options.phase` is `undefined` — there's no ordering concept
+  without phases.
+- **`--help`/`-h`** and **`--version`/`-v`** are recognized only as the first argument and exit 0.
+  Running with no command at all is treated like `--help`; an unrecognized command name still throws.
+- **Versions are strict `major.minor.patch` strings** (no `v` prefix, pre-release, or build
+  metadata), compared numerically. Every subdirectory of `migrationsDir` must parse as one, or
+  discovery throws.
+- **Execution order**: `computeMigrationPlan` sorts by semver version, then by filename
+  (`localeCompare`), ascending for `up`; `down` is the exact reverse (both descending). Filenames
+  are the only ordering mechanism inside a version (and phase) — no manifest, no timestamps.
+- **Migration layout** depends on the config's `phases` field, passed into `discoverMigrations` as
+  `{ phases: boolean }`:
   - `phases: true`: `<migrationsDir>/<version>/<phase>/<filename>.js` — the version and phase are
-    directory names, not part of the filename (e.g. `migrations/1.2.0/pre/add-user-index.js`).
-    Discovery rejects (throws on) any `.js` file placed directly in a version directory and any
-    subdirectory other than `pre`/`post`; non-`.js` files are ignored. Either phase directory may be
-    absent.
-  - `phases: false`: `<migrationsDir>/<version>/<filename>.js` — migrations are plain `.js` files
-    directly in the version directory. Discovery rejects (throws on) **any** subdirectory found
-    there, including one literally named `pre` or `post` (e.g. a leftover from switching modes);
-    non-`.js` files are still ignored.
+    directory names, not part of the filename. Discovery rejects (throws on) any `.js` file placed
+    directly in a version directory and any subdirectory other than `pre`/`post`; non-`.js` files are
+    ignored. Either phase directory may be absent.
+  - `phases: false`: `<migrationsDir>/<version>/<filename>.js`. Discovery rejects (throws on) **any**
+    subdirectory found there, including one literally named `pre` or `post` (e.g. a leftover from
+    switching modes); non-`.js` files are still ignored.
   - Migration files must already be compiled `.js`; mongo-updown does no TypeScript execution of
     user migrations, just a plain dynamic `import()`. Each file exports `up(ctx)` / `down(ctx)`,
     taking a single `MigrationContext` `{ db, client, session }`, and may export `transaction = true`
-    (any non-boolean value is a load error).
+    (any non-boolean value is a load error). `loadMigration` accepts these as named exports or as
+    properties of a `default` export object (so CJS `exports.up`, ESM `export const up`, and
+    `export default { up, down }` all work).
 - **State tracking**: a dedicated collection (default `mongo_updown_migrations`) is an
   append-only event log — documents are shaped `{ version, phase?, file, direction, date }`
   (`direction: 'up' | 'down'`) and are never deleted or updated, so the full migration history is
   always recoverable. When `phase` is absent (phaseless migrations), it is genuinely omitted from
-  the stored document, never written as `null`. `recordMigrationUp`/`recordMigrationDown`
-  (`src/db/migration-state-store.ts`) each just `insertOne` a new event with their respective
-  direction; there is no delete path. `getAppliedMigrations` derives "currently applied" (used to
-  diff against "on disk") via a `$sort`/`$group`(`$last`)/`$match` aggregation pipeline run inside
-  MongoDB, rather than fetching the whole (ever-growing) event log into the process — it groups by
-  `{ version, phase, file }` (a missing `phase` groups like `null`), keeps only the direction of
-  each group's most recent event, and returns the ones whose latest direction is `'up'`, using
-  `$ifNull`/`$$REMOVE` so a phaseless result also omits `phase` rather than returning it as `null`.
-  A migration rolled back and never reapplied has a `'down'` event as its latest and is
-  therefore excluded.
-- **Failure behavior**: `runMigrationCommand` (`src/cli/commands/run-migration-command.ts`) runs a
-  plan sequentially and stops at the first throw, leaving earlier steps in that run applied/rolled
-  back as they completed. For a non-transactional migration, recording state is a separate write
-  after the migration function returns, so a crash or state-store failure in that window can
-  leave a migration applied-but-unrecorded (or the reverse on rollback), and the next run will
-  attempt it again. This is an accepted trade-off, not a bug: user migrations are expected to be
-  safe to run twice.
+  the stored document, never written as `null`. "Currently applied" is derived by
+  `getAppliedMigrations` with an aggregation pipeline run inside MongoDB (not by fetching the
+  ever-growing log into the process): the latest event per `{ version, phase, file }` wins, and a
+  migration whose latest event is `'down'` is excluded. A missing `phase` groups like `null` but is
+  still omitted from the result. **Known limitation**: because `phase` is part of the identity,
+  switching an existing project between `phases: true` and `phases: false` makes all recorded
+  history look pending (the plan filters applied migrations by `phase`). Documented as unsupported
+  in README.md; a fix (e.g. a guard against mixed-mode history) hasn't been designed yet.
+- **Failure behavior**: `runMigrationCommand` runs a plan sequentially and stops at the first throw,
+  leaving earlier steps in that run applied/rolled back as they completed. For a non-transactional
+  migration, recording state is a separate write after the migration function returns, so a crash or
+  state-store failure in that window can leave a migration applied-but-unrecorded (or the reverse on
+  rollback), and the next run will attempt it again. This is an accepted trade-off, not a bug: user
+  migrations are expected to be safe to run twice.
 - **Transactions are opt-in per migration** (`export const transaction = true`), never global,
   because MongoDB transactions need a replica set/sharded cluster and forbid most DDL (index
   creation on existing collections, drops, renames, `collMod`) and anything past the 60s
@@ -103,14 +89,14 @@ npx mongo-updown down <version> <file?> [--phase <pre|post>]
   replies to its first command, so concurrent first operations (e.g. `Promise.all`) randomly fail
   with `ConflictingOperationInProgress`, while later ones happen to work. The driver documents this as
   unsupported. `connect` therefore enables `monitorCommands`, and each transaction attempt runs under
-  `watchSessionConcurrency` (`src/db/session-concurrency-guard.ts`), which tracks in-flight commands
-  whose `lsid` matches the migration's session. If any two overlap, the step throws a plain error
-  naming the migration, even when the driver would have succeeded. That aborts the transaction, and
-  since the error carries no `TransientTransactionError` label, `withTransaction` doesn't retry it.
+  `watchSessionConcurrency`, which tracks in-flight commands whose `lsid` matches the migration's
+  session. If any two overlap, the step throws a plain error naming the migration, even when the
+  driver would have succeeded. That aborts the transaction, and since the error carries no
+  `TransientTransactionError` label, `withTransaction` doesn't retry it.
 - **Preflight**: before running any step, `runMigrationCommand` loads every planned migration (so an
   import/shape error in any planned file runs nothing) and, if any is transactional, checks
-  `supportsTransactions` (`src/db/transaction-support.ts`, a pure function over the server's `hello`
-  response: true when `setName` is set or `msg === 'isdbgrid'`), throwing a message that lists the
+  `deploymentSupportsTransactions` (runs `hello`, then delegates to the pure `supportsTransactions`:
+  true when `setName` is set or `msg === 'isdbgrid'`), throwing a message that lists the
   transactional migrations when the server is standalone.
 - **Config file** (`mongo-updown.config.js`, written by `init`, refuses to overwrite an existing
   one unless `--force`) never contains a raw connection string — `mongoUri` is
@@ -118,23 +104,26 @@ npx mongo-updown down <version> <file?> [--phase <pre|post>]
   connecting. This keeps the config file safe to commit; a `fromFile` secrets file must be
   gitignored. `phases: boolean` is **required** — `isMongoUpdownConfig` rejects a config missing it
   or where it isn't a boolean; there is no implicit default anywhere in the schema or loader.
-  `init` accepts `--phases <true|false>` (default `true`) to control what it scaffolds into the
-  generated config — that's just the template's chosen content, not a schema fallback.
+  `init --phases <true|false>` (default `true`) only controls what the template scaffolds, not a
+  schema fallback. `init` writes `export default` or `module.exports` depending on the host
+  project's `package.json` `type` (`detectHostModuleType`; missing/unreadable means CommonJS). The
+  config is loaded from the current working directory, and relative `migrationsDir`/`fromFile`
+  paths resolve from there.
+- **Database name is required in the URI**: `connect` rejects a connection string with no database
+  path, because the driver would otherwise silently fall back to `test` and run migrations (and
+  record state) there.
 - **MongoDB driver** (`mongodb`) is a `peerDependency` (`^7.0.0`), not bundled — the host project
   controls the installed driver version.
 - **Module boundaries** under `src/`: `cli/` (argv parsing + `init`/`up`/`down` commands),
   `config/` (load/validate the config file), `migrations/` (discover files on disk, load them,
   compute the ordered plan to run — the plan computation is a pure function, no I/O), `db/` (own
-  the `MongoClient` connection and the state-tracking collection), `common/` (shared types, error
-  classes, and a logger port since `no-console` is a lint error).
+  the `MongoClient` connection and the state-tracking collection), `common/` (cross-cutting code;
+  currently just the logger port, needed since `no-console` is a lint error).
 - **Logger port** (`#Common/logger`) has four semantic methods — `info`, `step`, `success`,
-  `error` — instead of a single generic log call, so command code states _what kind_ of message
-  it's emitting and leaves symbol/color formatting entirely to the implementation. `consoleLogger`
-  is the production implementation: it prefixes each level with a restrained symbol (`·` info, `▸`
-  step, `✔` success, `✖` error) and colors the line via `chalk`, which auto-detects TTY/`NO_COLOR`
-  support so piped/CI output degrades to plain text automatically. `createConsoleLogger(chalkInstance)`
-  takes an injectable `ChalkInstance` (default: chalk's auto-detecting default export) so tests can
-  force color on/off deterministically instead of depending on the test runner's TTY state.
+  `error` — so command code states _what kind_ of message it's emitting and leaves symbol/color
+  formatting to the implementation (`consoleLogger`, built on `chalk`). `createConsoleLogger` takes
+  an injectable `ChalkInstance` so tests can force color on/off instead of depending on the test
+  runner's TTY state.
 
 ## Commands
 
@@ -148,21 +137,19 @@ pnpm run format:check  # check formatting without writing (oxfmt --check .)
 pnpm test              # pretest boots docker-compose's local MongoDB, node:test runs test/**/*.spec.ts, posttest tears it down
 ```
 
-`.github/workflows/ci.yml` runs `typecheck`, `lint`, `format:check`, and `test` (in that order) on
-every push to `main` and every pull request, pinned to the same Node (`24.21.0`) and pnpm
-(`11.10.0`) versions as `pnpm-workspace.yaml`/`.nvmrc`.
+CI (`.github/workflows/ci.yml`) runs `typecheck`, `lint`, `format:check`, and `test` on every push
+to `main` and every pull request.
 
 ## Toolchain
 
-- Package manager: **pnpm** (`pnpm-workspace.yaml` pins `nodeVersion: '24.21.0'`, `saveExact: true`). Node version is also pinned via `.nvmrc` (`24`). Dependencies are added with exact versions (see `typescript: "7.0.2"` in `package.json`, no `^`/`~`), except `peerDependencies`, which use ranges. `chalk` is the one runtime `dependency` (used by `#Common/logger`'s `consoleLogger`), pinned exact like everything else.
+- Package manager: **pnpm**. Node is pinned to `24.21.0` in `pnpm-workspace.yaml` (`.nvmrc` only
+  says `24`); the pnpm version is pinned only in `.github/workflows/ci.yml`. Dependencies are added with exact versions (`saveExact: true`, no `^`/`~`),
+  except `peerDependencies`, which use ranges. `chalk` is the one runtime `dependency`.
 - Module system: **`"type": "module"`** (ESM) — required so native Node TypeScript type-stripping can execute `.ts` files directly (it strips types only, it does not convert module syntax), which is what lets `node:test` run `.spec.ts` files with no build step.
-- Language: TypeScript, strict mode, target `ES2024`, `module: nodenext` (see `tsconfig.json`). Also sets `customConditions: ["development"]` (see Path aliases below), `erasableSyntaxOnly: true` (catches decorators/enums at typecheck time — decorators are intentionally unused; native type-stripping can't execute them), and `verbatimModuleSyntax: true` (forces explicit `import type`, matching oxfmt's import-sorting groups below). `tsconfig.build.json` extends it for compiling `src/**/*.ts` while excluding `**/*spec.ts`, emitting to `./dist`.
-- Lint: `oxlint` (`.oxlintrc.json`) — notable non-default rules once code exists:
-  - Relative imports (`./`, `../`), including same-folder siblings, are banned; use the `#`-prefixed path aliases (package.json `imports` field, see below) instead.
-  - `no-console`, `typescript/no-explicit-any`, `typescript/no-floating-promises`, `typescript/no-misused-promises`, and `typescript/explicit-module-boundary-types` are errors.
-  - `test/**` and `test/setup.ts`/`test/teardown.ts` have relaxed overrides (e.g. `no-restricted-imports` off for setup/teardown).
-- Format: `oxfmt` (`.oxfmtrc.json`) — no semicolons, single quotes, 2-space indent, 120 print width, no trailing commas, and import sorting grouped as: builtins → externals → `#`-prefixed path-alias imports → relative imports → unknown.
-- Test runner: native **`node:test`** (not Jest, despite what the scaffolding originally anticipated) — `describe`/`it`/`before`/`after` from `node:test`, assertions from `node:assert/strict`, no globals. Run as `node --conditions=development --test "test/**/*.spec.ts"`; `--conditions=development` is what makes the `#X/*` aliases resolve to `src/*.ts` (see below) instead of `dist/*.js`. Integration tests (`db/*`, migration loading) run against a real local MongoDB via `docker-compose.yml` — a single-node replica set (`rs0`, member host `localhost:27017`) so transactions work, started/stopped by `test/setup.ts`/`test/teardown.ts` through npm's `pretest`/`posttest` lifecycle scripts (`node:test` has no Jest-style `globalSetup`/`globalTeardown`).
+- Language: TypeScript, strict mode, `module: nodenext`. `erasableSyntaxOnly: true` means decorators/enums are unusable (native type-stripping can't execute them), and `verbatimModuleSyntax: true` forces explicit `import type`. `customConditions: ["development"]` supports the path aliases below. `tsconfig.build.json` compiles `src/**/*.ts` (excluding specs) to `./dist`.
+- Lint: `oxlint` (`.oxlintrc.json`). Notable rules: relative imports (`./`, `../`), including same-folder siblings, are banned in favor of the `#`-prefixed path aliases below; `no-console` and the `typescript/*` rules (`no-explicit-any`, `no-floating-promises`, `no-misused-promises`, `explicit-module-boundary-types`) are errors. `test/**` has relaxed overrides.
+- Format: `oxfmt` (`.oxfmtrc.json`), including import sorting: builtins → externals → `#` aliases → relative → unknown.
+- Test runner: native **`node:test`** — `describe`/`it`/`before`/`after` from `node:test`, assertions from `node:assert/strict`, no globals. Run with `--conditions=development` so the `#X/*` aliases resolve to `src/*.ts` instead of `dist/*.js`. Integration tests (`db/*`, migration loading) run against a real local MongoDB via `docker-compose.yml` — a single-node replica set (`rs0`) so transactions work — started/stopped by `test/setup.ts`/`test/teardown.ts` through npm's `pretest`/`posttest` lifecycle scripts (`node:test` has no Jest-style `globalSetup`/`globalTeardown`).
 
 ### Path aliases
 
@@ -179,7 +166,7 @@ Aliases are defined as a **package.json `imports` field**, not `tsconfig.json` `
 ```
 
 Import shared/common code via `#Common/*` (etc.) rather than a relative path — extensionless, e.g.
-`import { X } from '#Common/errors'` (enforced by the `no-restricted-imports` oxlint rule above).
+`import { consoleLogger } from '#Common/logger'` (enforced by the `no-restricted-imports` oxlint rule above).
 Add a further `#<Area>/*` alias here, following the same `development`/`default` pattern, whenever
 a new top-level `src/` area is introduced.
 
@@ -187,12 +174,17 @@ a new top-level `src/` area is introduced.
 
 Hard rules — follow these exactly, no exceptions:
 
-| Directive              | Detail                                                                                                                                                                                                                                    |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Doc first              | Always start updating README.md or CLAUDE.md file                                                                                                                                                                                         |
-| TDD                    | When adding functionality, always start with tests and follow red/green flow.                                                                                                                                                             |
-| Test coverage          | Every source file must have a paired test with at least one invalid and one valid case and cover existing variants.                                                                                                                       |
-| context7 first         | For any library, framework, tool, or DSL syntax — JavaScript APIs, testing libraries, etc. — always use the context7 MCP server (`resolve-library-id` then `query-docs`) instead of guessing from training data. Never guess from memory. |
-| Ask when uncertain     | If there's any doubt about intent, or multiple valid approaches exist, ask before proceeding. Never guess at architectural decisions, design choices, or user preferences.                                                                |
-| Ask via interactive UI | Whenever asking the user anything, always use the interactive questions interface (e.g. the AskUserQuestion tool) instead of asking in plain text, so the user can pick from options.                                                     |
-| Review commit messages | Always show the generated commit message and get explicit approval before running `git commit`. Never commit without that review.                                                                                                         |
+- **Doc first** — before changing code, update README.md and/or CLAUDE.md to describe the change.
+- **TDD** — when adding functionality, always start with tests and follow red/green flow.
+- **Test coverage** — every source file must have a paired test with at least one invalid and one
+  valid case, plus one case per branch or variant of the behavior.
+- **context7 first** — for any library, framework, tool, or DSL syntax — JavaScript APIs, testing
+  libraries, etc. — always use the context7 MCP server (`resolve-library-id` then `query-docs`)
+  instead of guessing from training data. Never guess from memory.
+- **Ask when uncertain** — if there's any doubt about intent, or multiple valid approaches exist, ask
+  before proceeding; never guess at architectural decisions, design choices, or user preferences.
+  Always ask through the interactive questions interface (the AskUserQuestion tool) instead of
+  plain text, so the user can pick from options.
+- **Review commit messages** — always show the generated commit message and get explicit approval
+  before running `git commit`. Never commit without that review. Print the message as final chat
+  text (not inside AskUserQuestion), then ask for approval through AskUserQuestion.

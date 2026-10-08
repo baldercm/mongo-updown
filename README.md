@@ -1,10 +1,12 @@
-mongo-updown is an opinionated MongoDB migration tool for Node.js. It runs your
-up/down migration scripts in order, up to or back from any semantic version, and adds the safety
-nets a production migration tool needs:
+# mongo-updown
+
+mongo-updown is an opinionated MongoDB migration tool for Node.js. It runs your up/down migration
+scripts in order, up to or back from any semantic version, and adds the safety nets a production
+migration tool needs:
 
 - **Up/down scripts** — every migration pairs a forward change with its rollback.
-- **Version aware** — target any semver version; every pending (or applied) migration up to it
-  runs in order, in one command.
+- **Version aware** — target any semver version: `up` applies every pending migration up to it,
+  `down` rolls back every applied migration from it upward, in order, in one command.
 - **Deployment phases** — optionally split migrations into `pre`/`post` steps, so additive
   changes always land before deploy and destructive cleanup always waits until after (see
   [Deployment phases](#deployment-phases)).
@@ -17,7 +19,7 @@ nets a production migration tool needs:
 
 ## Requirements
 
-- Node.js `>=24.21.0` (see `.nvmrc`)
+- Node.js `>=24.21.0`
 - The official [`mongodb`](https://www.npmjs.com/package/mongodb) driver (`^7.0.0`) installed in
   your project — mongo-updown depends on it as a peer dependency so your project controls the
   exact version.
@@ -30,43 +32,51 @@ Install in your project as an npm devDependency:
 npm i -D mongo-updown mongodb
 ```
 
-Create the default configuration file:
+Create the configuration file and the migrations directory:
 
 ```shell
-npx mongo-updown init
-# or, to scaffold a project without deployment phases:
-npx mongo-updown init --phases false
+npx mongo-updown init [--force] [--phases <true|false>]
 ```
 
-Run migrations up to and including a version:
+`init` refuses to overwrite an existing config file unless `--force` is given. `--phases`
+(default `true`) chooses whether the generated config uses [deployment
+phases](#deployment-phases).
+
+Apply migrations up to and including a version:
 
 ```shell
 npx mongo-updown up <version> <file?> [--phase <pre|post>]
 ```
 
-Roll back migrations down to a version:
+Roll back migrations from a version upward, inclusive:
 
 ```shell
 npx mongo-updown down <version> <file?> [--phase <pre|post>]
 ```
 
 `<version>` is a semantic version string (e.g. `1.2.0`). `up` runs every pending migration up to
-and including that version, in order; `down` rolls back every applied migration from that version
-upward, inclusive. The optional `<file?>` narrows either command to a single migration file within
-that version. Whether `--phase` is required depends on the project's config: it's required when
-`phases: true` and must be omitted when `phases: false` — see [Deployment
-phases](#deployment-phases).
+and including that version; `down` rolls back every applied migration from that version upward,
+inclusive. Both run in a fixed order — see [Execution order](#execution-order). The optional
+`<file?>` narrows either command to a single migration file within that version. Whether
+`--phase` is required depends on the project's config: it's required when `phases: true` and must
+be omitted when `phases: false` — see [Deployment phases](#deployment-phases).
+
+Run every command from your project root: mongo-updown reads `mongo-updown.config.js` from the
+current directory and resolves relative paths in it from there. A failed command exits with code
+`1`.
 
 Show usage help or the installed version:
 
 ```shell
-npx mongo-updown --help
-npx mongo-updown --version
+npx mongo-updown --help     # or -h
+npx mongo-updown --version  # or -v
 ```
 
 ## Configuration
 
-`init` writes `mongo-updown.config.js` to your project root:
+`init` writes `mongo-updown.config.js` to your project root, using the module format of your
+project (`export default` when your `package.json` has `"type": "module"`, `module.exports`
+otherwise):
 
 ```js
 module.exports = {
@@ -77,25 +87,33 @@ module.exports = {
 }
 ```
 
-`phases` (required, `boolean`) — whether migrations are split into `pre`/`post` [deployment
-phases](#deployment-phases) (`true`) or run as a single flat, ordered set (`false`). There's no
-default: every config must set it explicitly.
+Every field is required — there are no defaults:
+
+- `phases` (`boolean`) — whether migrations are split into `pre`/`post` [deployment
+  phases](#deployment-phases) (`true`) or run as a single flat, ordered set (`false`).
+- `mongoUri` — where the connection string lives (see below).
+- `migrationsDir` (`string`) — the directory holding your migrations.
+- `stateCollection` (`string`) — the collection mongo-updown logs migration runs to.
 
 The config file never contains a raw connection string, so it's always safe to commit. `mongoUri`
 is a pointer to where the connection string actually lives:
 
-- `{ fromEnv: '<NAME>' }` (the default) — read from an environment variable.
-- `{ fromFile: '<path>' }` — read from a separate file. If you use this form, **add that file to
-  `.gitignore`** — it's the one place the real connection string is written down.
+- `{ fromEnv: '<NAME>' }` (what `init` generates) — read from an environment variable.
+- `{ fromFile: '<path>' }` — read from a separate file (surrounding whitespace is trimmed). If you
+  use this form, **add that file to `.gitignore`** — it's the one place the real connection
+  string is written down.
 
-The connection string itself must include the database name (e.g.
-`mongodb://localhost:27017/my-app`, not just `mongodb://localhost:27017`) — mongo-updown connects
-to the database named in the URI, and the MongoDB driver throws if none is present.
+The connection string must include the database name (e.g. `mongodb://localhost:27017/my-app`,
+not just `mongodb://localhost:27017`): migrations and their state run against that database, and
+mongo-updown rejects a connection string without one rather than let the driver silently fall
+back to its default `test` database.
 
 ## Writing migrations
 
-Migrations live under `migrationsDir`, one subdirectory per version. The layout inside each
-version directory depends on the config's `phases` field.
+Migrations live under `migrationsDir`, one subdirectory per version. Every subdirectory there
+must be named with a plain `major.minor.patch` version (`1.2.0`, not `v1.2.0` or `1.2.0-beta.1`);
+anything else is rejected with an error. The layout inside each version directory depends on the
+config's `phases` field.
 
 With `phases: true`, each version directory has one subdirectory per [deployment
 phase](#deployment-phases) — `pre/` and/or `post/`:
@@ -104,12 +122,12 @@ phase](#deployment-phases) — `pre/` and/or `post/`:
 migrations/
   1.0.0/
     pre/
-      create-users-collection.js
+      001-create-users-collection.js
   1.2.0/
     pre/
-      add-user-email-index.js
+      001-add-user-email-index.js
     post/
-      drop-legacy-username-field.js
+      001-drop-legacy-username-field.js
 ```
 
 Every migration must live in a phase subdirectory: a `.js` file placed directly in a version
@@ -121,15 +139,15 @@ phase subdirectories at all:
 ```
 migrations/
   1.0.0/
-    create-users-collection.js
+    001-create-users-collection.js
   1.2.0/
-    add-user-email-index.js
-    drop-legacy-username-field.js
+    001-add-user-email-index.js
+    002-drop-legacy-username-field.js
 ```
 
 Any subdirectory found under a version directory in this mode — including a leftover `pre/` or
 `post/` from switching modes — is rejected with an error, since flat mode expects only `.js`
-files there.
+files there. In both modes, non-`.js` files are ignored.
 
 Each migration file exports `up` and `down`. Both receive a single context object,
 `{ db, client, session }`:
@@ -144,6 +162,9 @@ exports.down = async ({ db }) => {
 }
 ```
 
+In an ES module, use named exports (`export const up = …`) or a default export object
+(`export default { up, down }`).
+
 - `db` is the database named in the connection string.
 - `client` is the connected `MongoClient`, for when you need another database.
 - `session` is the `ClientSession` of the migration's transaction when it
@@ -152,6 +173,25 @@ exports.down = async ({ db }) => {
 Migration files must be plain, already-compiled `.js` — mongo-updown does not transpile
 TypeScript at runtime. If you write migrations in TypeScript, compile them before running `up`/
 `down`.
+
+Don't delete or rename a migration file once it has been applied: mongo-updown identifies
+migrations by their path, so `down` fails when an applied migration is no longer on disk, and a
+renamed file is treated as a new, pending migration.
+
+## Execution order
+
+Migrations run in a deterministic order:
+
+- **Across versions:** by semver, not alphabetically (`1.2.0` runs before `1.10.0`).
+- **Within a version (and phase):** by filename. `up` runs files in ascending order; `down` is the
+  exact reverse — versions descending, filenames descending.
+- **Phases:** each run executes a single phase, so `pre` and `post` files are never interleaved —
+  see [Deployment phases](#deployment-phases).
+
+mongo-updown doesn't read a manifest or file timestamps, so **the filename is the only way to
+control order inside a version**. Prefix files with a zero-padded number or a timestamp, as in the
+examples above. Zero-padding matters because names are compared as text: `10-x.js` sorts before
+`2-x.js`. Passing `<file?>` to `up`/`down` skips ordering entirely and runs only that file.
 
 ## Deployment phases
 
@@ -187,11 +227,19 @@ mongo-updown enforces this order: `up <version> --phase post` fails while any `p
 to that version is still pending, and `down <version> --phase pre` fails while any `post`
 migration from that version upward is still applied. Nothing runs when the check fails.
 
+**Choose `phases` once.** Switching an existing project between `phases: true` and
+`phases: false` isn't supported yet: the phase is part of each recorded migration's identity, so
+after a switch every previously applied migration looks pending and the next `up` would run them
+all again.
+
 ## Failure behavior
 
 Migrations in a plan run one at a time, in order. If one throws, the run stops immediately —
 migrations already applied (or rolled back) earlier in that same run stay that way; nothing after
-the failure is attempted.
+the failure is attempted, and the command exits with code `1`.
+
+Before running anything, mongo-updown loads every migration in the plan, so a file that fails to
+import or doesn't export `up`/`down` stops the run before any migration executes.
 
 For a migration that isn't [transactional](#transactions), recording that it ran is a separate
 write that happens right after its `up`/`down` function returns. A process crash or a failed
@@ -201,7 +249,8 @@ safe to run twice — e.g. use `createIndex`/upsert-style operations instead of 
 second run — so a retry after a partial failure is harmless.
 
 A transactional migration doesn't have this window: its writes and its state record commit
-together or not at all. If it throws, none of its writes are kept and it stays pending.
+together or not at all. If it throws, none of its writes are kept and its state is unchanged — it
+stays pending after a failed `up`, and stays applied after a failed `down`.
 
 ## Transactions
 
@@ -243,3 +292,19 @@ Transactions are opt-in because they come with MongoDB's restrictions:
   session are ever in flight at once (`Promise.all`, operations started without `await`, …), it
   aborts the transaction and fails the migration with an error saying so. Await each operation
   before starting the next.
+
+## Development
+
+Contributing needs [pnpm](https://pnpm.io) and Docker — the test suite runs against a local
+single-node MongoDB replica set started through `docker-compose.yml`:
+
+```shell
+pnpm install
+pnpm test   # starts MongoDB, runs the tests, stops MongoDB
+```
+
+`pnpm run typecheck`, `pnpm run lint`, and `pnpm run format:check` run the remaining CI checks.
+
+## License
+
+[MIT](LICENSE)

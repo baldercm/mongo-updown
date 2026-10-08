@@ -1,7 +1,7 @@
 {
   "name": "mongo-updown",
   "version": "1.0.0",
-  "description": "mongo-updown is an opinionated MongoDB migration tool featuring: - up/down scripts - version aware - written in TypeScript",
+  "description": "Opinionated MongoDB migration tool: version-aware up/down scripts, pre/post deployment phases, opt-in transactions, and an append-only audit trail.",
   "keywords": [
     "cli",
     "database",
