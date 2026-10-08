@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -92,6 +92,58 @@ describe('resolveMongoUri', () => {
       assert.equal(uri, 'mongodb://from-file/')
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads the connection string from an absolute file path outside cwd', async () => {
+    const secretsDir = await mkdtemp(join(tmpdir(), 'mongo-updown-uri-secrets-'))
+    const cwd = await mkdtemp(join(tmpdir(), 'mongo-updown-uri-cwd-'))
+    try {
+      const filePath = join(secretsDir, 'mongo-uri')
+      await writeFile(filePath, 'mongodb://from-absolute-file/\n')
+      const uri = await resolveMongoUri({ fromFile: filePath }, cwd)
+      assert.equal(uri, 'mongodb://from-absolute-file/')
+    } finally {
+      await rm(secretsDir, { recursive: true, force: true })
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('expands a leading ~/ to the home directory', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'mongo-updown-uri-home-'))
+    const cwd = await mkdtemp(join(tmpdir(), 'mongo-updown-uri-cwd-'))
+    const originalHome = process.env.HOME
+    process.env.HOME = home
+    try {
+      await mkdir(join(home, '.config'))
+      await writeFile(join(home, '.config', 'mongo-uri'), 'mongodb://from-home-file/\n')
+      const uri = await resolveMongoUri({ fromFile: '~/.config/mongo-uri' }, cwd)
+      assert.equal(uri, 'mongodb://from-home-file/')
+    } finally {
+      process.env.HOME = originalHome
+      await rm(home, { recursive: true, force: true })
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('does not expand other ~ forms, resolving them from cwd', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'mongo-updown-uri-cwd-'))
+    try {
+      await mkdir(join(cwd, '~other'))
+      await writeFile(join(cwd, '~other', 'mongo-uri'), 'mongodb://from-tilde-dir/\n')
+      const uri = await resolveMongoUri({ fromFile: '~other/mongo-uri' }, cwd)
+      assert.equal(uri, 'mongodb://from-tilde-dir/')
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('throws when the file does not exist', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'mongo-updown-uri-cwd-'))
+    try {
+      await assert.rejects(resolveMongoUri({ fromFile: './missing-uri' }, cwd), /ENOENT/)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
     }
   })
 })

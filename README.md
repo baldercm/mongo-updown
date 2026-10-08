@@ -14,8 +14,8 @@ migration tool needs:
   together atomically (see [Transactions](#transactions)).
 - **Append-only audit trail** — every migration run is logged and never deleted or rewritten, so
   the full history is always recoverable.
-- **No secrets in the config** — the connection string lives in an env var or a gitignored file,
-  never in the (commit-safe) config itself.
+- **No secrets in the config** — the connection string lives in an env var or a file kept out of
+  version control, never in the (commit-safe) config itself.
 
 ## Requirements
 
@@ -99,9 +99,12 @@ The config file never contains a raw connection string, so it's always safe to c
 is a pointer to where the connection string actually lives:
 
 - `{ fromEnv: '<NAME>' }` (what `init` generates) — read from an environment variable.
-- `{ fromFile: '<path>' }` — read from a separate file (surrounding whitespace is trimmed). If you
-  use this form, **add that file to `.gitignore`** — it's the one place the real connection
-  string is written down.
+- `{ fromFile: '<path>' }` — read from a separate file (surrounding whitespace is trimmed). The
+  path can be absolute (e.g. `/etc/my-app/mongo-uri`), start with `~/` for your home directory
+  (e.g. `~/.config/my-app/mongo-uri`), or be relative to the directory you run mongo-updown
+  from. The file doesn't need to be inside your repository: keep it outside and there's
+  nothing to ignore. If you do keep it inside, **add it to `.gitignore`** — it's the one place
+  the real connection string is written down.
 
 The connection string must include the database name (e.g. `mongodb://localhost:27017/my-app`,
 not just `mongodb://localhost:27017`): migrations and their state run against that database, and

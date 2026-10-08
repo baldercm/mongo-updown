@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -30,7 +31,13 @@ export async function resolveMongoUri(source: MongoUriSource, cwd: string): Prom
     return value
   }
 
-  const filePath = isAbsolute(source.fromFile) ? source.fromFile : join(cwd, source.fromFile)
-  const contents = await readFile(filePath, 'utf8')
+  const contents = await readFile(resolveFromFilePath(source.fromFile, cwd), 'utf8')
   return contents.trim()
+}
+
+function resolveFromFilePath(path: string, cwd: string): string {
+  if (path.startsWith('~/')) {
+    return join(homedir(), path.slice(2))
+  }
+  return isAbsolute(path) ? path : join(cwd, path)
 }

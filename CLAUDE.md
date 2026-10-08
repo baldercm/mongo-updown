@@ -101,9 +101,10 @@ scripts, version-aware. See README.md for the CLI usage and user-facing behavior
 - **Config file** (`mongo-updown.config.js`, written by `init`, refuses to overwrite an existing
   one unless `--force`) never contains a raw connection string — `mongoUri` is
   `{ fromEnv: string } | { fromFile: string }`, resolved to the actual URI only right before
-  connecting. This keeps the config file safe to commit; a `fromFile` secrets file must be
-  gitignored. `phases: boolean` is **required** — `isMongoUpdownConfig` rejects a config missing it
-  or where it isn't a boolean; there is no implicit default anywhere in the schema or loader.
+  connecting. This keeps the config file safe to commit; the `fromFile` secrets file can live
+  outside the repo (absolute and `~/` paths are supported) or, if inside it, must be gitignored.
+  `phases: boolean` is **required** — `isMongoUpdownConfig` rejects a config missing it or where it
+  isn't a boolean; there is no implicit default anywhere in the schema or loader.
   `init --phases <true|false>` (default `true`) only controls what the template scaffolds, not a
   schema fallback. `init` writes `export default` or `module.exports` depending on the host
   project's `package.json` `type` (`detectHostModuleType`; missing/unreadable means CommonJS). The
